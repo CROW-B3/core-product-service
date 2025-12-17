@@ -1,0 +1,41 @@
+{
+  "name": "cloudflare-workers-containers-hono-template",
+  "description": "Hono-powered Cloudflare Worker that routes requests to a serverless Container backend (Workers Containers) via @cloudflare/containers.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "prepare": "husky",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "bun run prettier src/ --write",
+    "bun:dev": "bun run --watch src/index.ts",
+    "bun:start": "bun run src/index.ts",
+    "bun:build": "bun build src/index.ts --compile --outfile server"
+  },
+  "dependencies": {
+    "@antfu/eslint-config": "^6.7.1",
+    "@hono/swagger-ui": "^0.5.2",
+    "@hono/zod-openapi": "^1.1.5",
+    "hono": "^4.11.1",
+    "jiti": "^2.6.1",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@commitlint/config-conventional": "^20.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.7.4",
+    "wrangler": "^4.55.0"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,scss,html,yml,yaml}": [
+      "prettier --write"
+    ]
+  }
+}
