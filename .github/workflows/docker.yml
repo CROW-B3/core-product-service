@@ -30,7 +30,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.DOCKER_USERNAME }}/cloudflare-workers-python
+            ${{ secrets.DOCKER_USERNAME }}/core-product-service
           tags: |
             type=ref,event=branch
             type=ref,event=pr
