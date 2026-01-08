@@ -7,7 +7,7 @@
     "deploy": "wrangler deploy --minify",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:studio": "drizzle-kit studio",
-    "db:studio:prod": "REMOTE=1 drizzle-kit studio",
+    "db:studio:remote": "REMOTE=1 drizzle-kit studio",
     "prepare": "husky",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
