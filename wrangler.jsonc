@@ -21,8 +21,14 @@
       "bucket_name": "crow-core-product-service-store"
     }
   ],
+  "routes": [
+    { "pattern": "internal.products.crowai.dev", "custom_domain": true }
+  ],
   "env": {
     "dev": {
+      "routes": [
+        { "pattern": "dev.internal.products.crowai.dev", "custom_domain": true }
+      ],
       "d1_databases": [
         {
           "binding": "DB",
