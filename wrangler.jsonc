@@ -8,6 +8,9 @@
     "enabled": true,
     "head_sampling_rate": 1,
   },
+  "vars": {
+    "ENVIRONMENT": "prod",
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -26,6 +29,9 @@
   ],
   "env": {
     "dev": {
+      "vars": {
+        "ENVIRONMENT": "dev",
+      },
       "routes": [
         { "pattern": "dev.internal.products.crowai.dev", "custom_domain": true }
       ],
@@ -44,6 +50,9 @@
       ]
     },
     "local": {
+      "vars": {
+        "ENVIRONMENT": "local",
+      },
       "d1_databases": [
         {
           "binding": "DB",
