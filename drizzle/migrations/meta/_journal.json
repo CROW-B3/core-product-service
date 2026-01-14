@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1768414002009,
+      "tag": "0000_tense_bill_hollister",
+      "breakpoints": true
+    }
+  ]
+}
