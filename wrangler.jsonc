@@ -11,11 +11,15 @@
   "vars": {
     "ENVIRONMENT": "prod",
   },
+  "ai": {
+    "binding": "AI"
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "crow-core-product-service-db",
-      "database_id": "f04c1d6d-60cf-4fe9-aed4-a2942bf0d11a"
+      "database_id": "f04c1d6d-60cf-4fe9-aed4-a2942bf0d11a",
+      "migrations_dir": "drizzle/migrations"
     }
   ],
   "r2_buckets": [
@@ -24,6 +28,15 @@
       "bucket_name": "crow-core-product-service-store"
     }
   ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "crow-product-crawl-queue",
+        "max_batch_size": 1,
+        "max_batch_timeout": 30
+      }
+    ]
+  },
   "routes": [
     { "pattern": "internal.products.crowai.dev", "custom_domain": true }
   ],
@@ -32,6 +45,9 @@
       "vars": {
         "ENVIRONMENT": "dev",
       },
+      "ai": {
+        "binding": "AI"
+      },
       "routes": [
         { "pattern": "dev.internal.products.crowai.dev", "custom_domain": true }
       ],
@@ -39,7 +55,8 @@
         {
           "binding": "DB",
           "database_name": "crow-core-product-service-db-dev",
-          "database_id": "44489847-8f54-437f-ae91-5c379c6f6671"
+          "database_id": "44489847-8f54-437f-ae91-5c379c6f6671",
+          "migrations_dir": "drizzle/migrations"
         }
       ],
       "r2_buckets": [
@@ -47,17 +64,30 @@
           "binding": "R2_BUCKET",
           "bucket_name": "crow-core-product-service-store-dev"
         }
-      ]
+      ],
+      "queues": {
+        "consumers": [
+          {
+            "queue": "crow-product-crawl-queue-dev",
+            "max_batch_size": 1,
+            "max_batch_timeout": 30
+          }
+        ]
+      }
     },
     "local": {
       "vars": {
         "ENVIRONMENT": "local",
       },
+      "ai": {
+        "binding": "AI"
+      },
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "crow-core-product-service-db-local",
-          "database_id": "28bfe4ff-4126-416b-a65e-bd9740184ff3"
+          "database_id": "28bfe4ff-4126-416b-a65e-bd9740184ff3",
+          "migrations_dir": "drizzle/migrations"
         }
       ],
       "r2_buckets": [
@@ -65,7 +95,16 @@
           "binding": "R2_BUCKET",
           "bucket_name": "crow-core-product-service-store-local"
         }
-      ]
+      ],
+      "queues": {
+        "consumers": [
+          {
+            "queue": "crow-product-crawl-queue-local",
+            "max_batch_size": 1,
+            "max_batch_timeout": 30
+          }
+        ]
+      }
     },
   },
 }
