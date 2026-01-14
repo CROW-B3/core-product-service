@@ -5,6 +5,8 @@ export interface Environment {
   R2_BUCKET: R2Bucket;
   AI: Ai;
   ENVIRONMENT: 'local' | 'dev' | 'prod';
+  AI_GATEWAY_ID: string;
+  AI_MODEL: string;
 }
 
 export interface CrawlJobMessage {
