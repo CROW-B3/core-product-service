@@ -1,5 +1,6 @@
 import type { Environment } from '../types';
 import { z } from 'zod';
+import { productExtractionPrompt } from '../prompts/product-extraction';
 
 const ExtractedProductSchema = z.object({
   id: z.string(),
@@ -16,8 +17,6 @@ const ProductBatchSchema = z.object({
 });
 
 export type ExtractedProduct = z.infer<typeof ExtractedProductSchema>;
-
-const AI_GATEWAY_ID = 'crow-ai-gateway';
 
 const splitHtmlIntoChunks = (
   html: string,
@@ -79,33 +78,9 @@ export const extractProductsFromHtml = async (
 
     try {
       const response = await env.AI.run(
-        '@cf/meta/llama-3.1-8b-instruct',
-        {
-          prompt: `Extract all product information from this HTML content and return as JSON.
-
-Return a JSON object with this structure:
-{
-  "products": [
-    {
-      "id": "string (generate if not found)",
-      "title": "string",
-      "description": "string",
-      "images": ["array of image URLs"],
-      "price": number or null,
-      "category": "string or null"
-    }
-  ],
-  "unprocessedContent": "any incomplete product HTML at the end"
-}
-
-HTML Content:
-${inputContent}`,
-        },
-        {
-          gateway: {
-            id: AI_GATEWAY_ID,
-          },
-        }
+        env.AI_MODEL as Parameters<typeof env.AI.run>[0],
+        { prompt: productExtractionPrompt(inputContent) },
+        { gateway: { id: env.AI_GATEWAY_ID } }
       );
 
       const responseText =
