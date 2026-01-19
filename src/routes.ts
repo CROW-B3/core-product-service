@@ -104,3 +104,20 @@ export const GetProductsByOrgRoute = createRoute({
     },
   },
 });
+
+export const TriggerCrawlerJobRoute = createRoute({
+  method: 'post',
+  path: '/api/v1/crawler-jobs/{id}/trigger',
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: CrawlerJobSchema } },
+      description: 'Crawler job triggered',
+    },
+    404: {
+      description: 'Crawler job not found',
+    },
+  },
+});
