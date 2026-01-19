@@ -6,6 +6,7 @@ import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
 import * as schema from './db/schema';
 import { handleQueueBatch } from './queues';
+import { processProductCrawlJob } from './queues/product-crawl';
 import {
   CreateCrawlerJobRoute,
   GetCrawlerJobRoute,
@@ -13,6 +14,7 @@ import {
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
+  TriggerCrawlerJobRoute,
 } from './routes';
 
 const app = new OpenAPIHono<{ Bindings: Environment }>();
@@ -133,6 +135,34 @@ app.openapi(GetProductsByOrgRoute, async c => {
     page,
     pageSize,
   });
+});
+
+app.openapi(TriggerCrawlerJobRoute, async c => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.valid('param');
+
+  const result = await db
+    .select()
+    .from(schema.crawlerJob)
+    .where(eq(schema.crawlerJob.id, id))
+    .limit(1);
+
+  if (!result[0]) return c.json({ error: 'Not found' }, 404);
+
+  const job = result[0];
+  await processProductCrawlJob(c.env, {
+    jobId: id,
+    organizationId: job.organizationId,
+    url: job.sourceValue,
+  });
+
+  const updatedJob = await db
+    .select()
+    .from(schema.crawlerJob)
+    .where(eq(schema.crawlerJob.id, id))
+    .limit(1);
+
+  return c.json(formatCrawlerJob(updatedJob[0]));
 });
 
 app.doc('/docs', {
