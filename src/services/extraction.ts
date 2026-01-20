@@ -59,8 +59,12 @@ const parseAiJsonResponse = (
 
   try {
     const parsed = JSON.parse(jsonStr.trim());
-    return ProductBatchSchema.parse(parsed);
-  } catch {
+    const validated = ProductBatchSchema.parse(parsed);
+    return validated;
+  } catch (error) {
+    console.error('[EXTRACTION] Failed to parse AI response:', error);
+    console.error('[EXTRACTION] Raw response:', response.slice(0, 500));
+    console.error('[EXTRACTION] Extracted JSON:', jsonStr.slice(0, 500));
     return { products: [], unprocessedContent: '' };
   }
 };
@@ -69,17 +73,43 @@ export const extractProductsFromHtml = async (
   env: Environment,
   html: string
 ): Promise<ExtractedProduct[]> => {
+  // For local development without AI binding, return mock data
+  if (env.ENVIRONMENT === 'local' && !env.AI) {
+    return [
+      {
+        id: 'mock-product-1',
+        title: 'Sample Product 1',
+        description: 'This is a mock product for local testing',
+        images: ['https://via.placeholder.com/300'],
+        price: 29.99,
+        category: 'Test Category',
+      },
+      {
+        id: 'mock-product-2',
+        title: 'Sample Product 2',
+        description: 'Another mock product for local testing',
+        images: ['https://via.placeholder.com/300'],
+        price: 49.99,
+        category: 'Test Category',
+      },
+    ];
+  }
+
   const chunks = splitHtmlIntoChunks(html);
   const allProducts: ExtractedProduct[] = [];
   let carryForward = '';
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
     const inputContent = carryForward + chunk;
 
     try {
       const response = await env.AI.run(
         env.AI_MODEL as Parameters<typeof env.AI.run>[0],
-        { prompt: productExtractionPrompt(inputContent) },
+        {
+          prompt: productExtractionPrompt(inputContent),
+          max_tokens: 4096,
+        },
         { gateway: { id: env.AI_GATEWAY_ID } }
       );
 
@@ -93,7 +123,7 @@ export const extractProductsFromHtml = async (
       allProducts.push(...parsed.products);
       carryForward = parsed.unprocessedContent || '';
     } catch (error) {
-      console.error('AI extraction error:', error);
+      console.error('[EXTRACTION] AI extraction error:', error);
       carryForward = '';
     }
   }
