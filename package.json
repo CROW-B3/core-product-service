@@ -3,7 +3,7 @@
   "description": "Hono-powered Cloudflare Worker that routes requests to a serverless Container backend (Workers Containers) via @cloudflare/containers.",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --env local --port 8003 --inspector-port 9232",
+    "dev": "wrangler dev --env local --port 8003 --inspector-port 9232 --persist-to ../.wrangler/state",
     "deploy": "wrangler deploy --minify",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:studio": "drizzle-kit studio",
