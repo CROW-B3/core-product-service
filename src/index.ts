@@ -57,6 +57,12 @@ app.openapi(CreateCrawlerJobRoute, async c => {
     updatedAt: now,
   });
 
+  await c.env.PRODUCT_CRAWL_QUEUE.send({
+    jobId: id,
+    organizationId: body.organizationId,
+    url: body.sourceValue,
+  });
+
   const result = await db
     .select()
     .from(schema.crawlerJob)
