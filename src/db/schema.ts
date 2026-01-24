@@ -32,3 +32,18 @@ export const product = sqliteTable('product', {
   createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
 });
+
+export const productAiDescription = sqliteTable('product_ai_description', {
+  id: text('id').primaryKey(),
+  productId: text('productId')
+    .notNull()
+    .references(() => product.id, { onDelete: 'cascade' }),
+  imageUrl: text('imageUrl').notNull(),
+  description: text('description').notNull(),
+  features: text('features'),
+  colors: text('colors'),
+  materials: text('materials'),
+  style: text('style'),
+  modelUsed: text('modelUsed').notNull(),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+});
