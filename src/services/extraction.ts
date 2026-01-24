@@ -1,134 +1,221 @@
 import type { Environment } from '../types';
-import { z } from 'zod';
-import { productExtractionPrompt } from '../prompts/product-extraction';
+import type { ExtractedProduct, TextChunk } from './ai-extraction';
+import {
+  extractProductsFromChunks,
+  extractProductsFromMultiplePages,
+  extractProductsFromPage,
+} from './ai-extraction';
+import { crawlPageWithBrowser, discoverProductPages } from './browser-crawler';
+import { crawlWithService, isCrawlerServiceAvailable } from './crawler-client';
+import {
+  canCrawl,
+  discoverProductUrlsFromSitemap,
+  getCrawlDelay,
+} from './sitemap';
 
-const ExtractedProductSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string(),
-  images: z.array(z.string()),
-  price: z.number().optional(),
-  category: z.string().optional(),
-});
+export type { ExtractedProduct };
 
-const ProductBatchSchema = z.object({
-  products: z.array(ExtractedProductSchema),
-  unprocessedContent: z.string().optional(),
-});
+export interface CrawlResult {
+  products: ExtractedProduct[];
+  pagesVisited: number;
+  errors: string[];
+  totalTime: number;
+}
 
-export type ExtractedProduct = z.infer<typeof ExtractedProductSchema>;
+const delay = (ms: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, ms));
 
-const splitHtmlIntoChunks = (
-  html: string,
-  maxChunkSize: number = 80000
-): string[] => {
-  const chunks: string[] = [];
-  let currentChunk = '';
-  const lines = html.split('\n');
-
-  for (const line of lines) {
-    if (currentChunk.length + line.length > maxChunkSize) {
-      if (currentChunk) chunks.push(currentChunk);
-      currentChunk = line;
-    } else {
-      currentChunk += (currentChunk ? '\n' : '') + line;
-    }
+const normalizeUrl = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(
+      /\/$/,
+      ''
+    );
+  } catch {
+    return url;
   }
-
-  if (currentChunk) chunks.push(currentChunk);
-  return chunks;
 };
 
-const parseAiJsonResponse = (
-  response: string
-): z.infer<typeof ProductBatchSchema> => {
-  const codeBlockStart = response.indexOf('```json');
-  const codeBlockEnd = response.lastIndexOf('```');
+const crawlWithCrawlerService = async (
+  env: Environment,
+  sourceUrl: string,
+  options: {
+    maxPages?: number;
+    maxProducts?: number;
+  }
+): Promise<CrawlResult> => {
+  const startTime = Date.now();
+  const { maxPages = 30, maxProducts = 100 } = options;
 
-  let jsonStr = response;
+  console.warn(`[CRAWLER] Using crawler service for ${sourceUrl}`);
 
-  if (codeBlockStart !== -1 && codeBlockEnd > codeBlockStart) {
-    jsonStr = response.slice(codeBlockStart + 7, codeBlockEnd).trim();
-  } else {
-    const braceStart = response.indexOf('{');
-    const braceEnd = response.lastIndexOf('}');
-    if (braceStart !== -1 && braceEnd > braceStart) {
-      jsonStr = response.slice(braceStart, braceEnd + 1);
+  try {
+    const crawlResponse = await crawlWithService(env, {
+      url: sourceUrl,
+      max_pages: maxPages,
+      depth_limit: 10,
+      use_playwright: 'auto',
+      chunk_size_tokens: 500,
+    });
+
+    if (!crawlResponse.success) {
+      return {
+        products: [],
+        pagesVisited: 0,
+        errors: crawlResponse.errors,
+        totalTime: Date.now() - startTime,
+      };
+    }
+
+    console.warn(
+      `[CRAWLER] Service returned ${crawlResponse.chunks.length} chunks from ${crawlResponse.metadata.total_pages} pages`
+    );
+
+    const products = await extractProductsFromChunks(
+      env,
+      crawlResponse.chunks as TextChunk[]
+    );
+
+    return {
+      products: products.slice(0, maxProducts),
+      pagesVisited: crawlResponse.metadata.total_pages,
+      errors: crawlResponse.errors,
+      totalTime: Date.now() - startTime,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[CRAWLER] Crawler service failed:`, error);
+    return {
+      products: [],
+      pagesVisited: 0,
+      errors: [errorMsg],
+      totalTime: Date.now() - startTime,
+    };
+  }
+};
+
+export const crawlAndExtractProducts = async (
+  env: Environment,
+  sourceUrl: string,
+  options: {
+    maxPages?: number;
+    maxProducts?: number;
+    useSitemap?: boolean;
+    useBrowserDiscovery?: boolean;
+    useCrawlerService?: boolean;
+  } = {}
+): Promise<CrawlResult> => {
+  const startTime = Date.now();
+  const errors: string[] = [];
+  const {
+    maxPages = 20,
+    maxProducts = 100,
+    useSitemap = true,
+    useBrowserDiscovery = true,
+    useCrawlerService = true,
+  } = options;
+
+  if (useCrawlerService) {
+    const crawlerAvailable = await isCrawlerServiceAvailable(env);
+    if (crawlerAvailable) {
+      return crawlWithCrawlerService(env, sourceUrl, { maxPages, maxProducts });
+    }
+    console.warn(
+      `[CRAWLER] Crawler service not available, falling back to browser crawling`
+    );
+  }
+
+  const isAllowed = await canCrawl(sourceUrl, sourceUrl);
+  if (!isAllowed) {
+    console.warn(`[CRAWLER] Blocked by robots.txt: ${sourceUrl}`);
+    return {
+      products: [],
+      pagesVisited: 0,
+      errors: ['Blocked by robots.txt'],
+      totalTime: Date.now() - startTime,
+    };
+  }
+
+  const crawlDelayMs = await getCrawlDelay(sourceUrl);
+
+  let productUrls: string[] = [];
+
+  if (useSitemap) {
+    const sitemapUrls = await discoverProductUrlsFromSitemap(
+      sourceUrl,
+      maxPages
+    );
+    productUrls.push(...sitemapUrls);
+  }
+
+  if (useBrowserDiscovery && productUrls.length < maxPages) {
+    const browserUrls = await discoverProductPages(
+      env,
+      sourceUrl,
+      2,
+      maxPages - productUrls.length
+    );
+    productUrls.push(...browserUrls);
+  }
+
+  if (productUrls.length === 0) {
+    productUrls = [sourceUrl];
+  }
+
+  productUrls = [...new Set(productUrls.map(normalizeUrl))].slice(0, maxPages);
+
+  const allProducts: ExtractedProduct[] = [];
+  const pages: Array<{ url: string; html: string }> = [];
+  let pagesVisited = 0;
+
+  for (const url of productUrls) {
+    if (allProducts.length >= maxProducts) {
+      break;
+    }
+
+    try {
+      const pageContent = await crawlPageWithBrowser(env, url);
+      pages.push({ url, html: pageContent.html });
+      pagesVisited++;
+
+      if (pages.length >= 5 || pagesVisited === productUrls.length) {
+        const products = await extractProductsFromMultiplePages(env, pages);
+        allProducts.push(...products);
+        pages.length = 0;
+      }
+
+      if (pagesVisited < productUrls.length) {
+        await delay(crawlDelayMs);
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      errors.push(`Failed to crawl ${url}: ${errorMsg}`);
+      console.error(`[CRAWLER] Error crawling ${url}:`, error);
     }
   }
 
-  try {
-    const parsed = JSON.parse(jsonStr.trim());
-    const validated = ProductBatchSchema.parse(parsed);
-    return validated;
-  } catch (error) {
-    console.error('[EXTRACTION] Failed to parse AI response:', error);
-    console.error('[EXTRACTION] Raw response:', response.slice(0, 500));
-    console.error('[EXTRACTION] Extracted JSON:', jsonStr.slice(0, 500));
-    return { products: [], unprocessedContent: '' };
+  if (pages.length > 0) {
+    const products = await extractProductsFromMultiplePages(env, pages);
+    allProducts.push(...products);
   }
+
+  const totalTime = Date.now() - startTime;
+
+  return {
+    products: allProducts.slice(0, maxProducts),
+    pagesVisited,
+    errors,
+    totalTime,
+  };
 };
 
 export const extractProductsFromHtml = async (
   env: Environment,
-  html: string
+  html: string,
+  pageUrl: string = 'unknown'
 ): Promise<ExtractedProduct[]> => {
-  // For local development without AI binding, return mock data
-  if (env.ENVIRONMENT === 'local' && !env.AI) {
-    return [
-      {
-        id: 'mock-product-1',
-        title: 'Sample Product 1',
-        description: 'This is a mock product for local testing',
-        images: ['https://via.placeholder.com/300'],
-        price: 29.99,
-        category: 'Test Category',
-      },
-      {
-        id: 'mock-product-2',
-        title: 'Sample Product 2',
-        description: 'Another mock product for local testing',
-        images: ['https://via.placeholder.com/300'],
-        price: 49.99,
-        category: 'Test Category',
-      },
-    ];
-  }
-
-  const chunks = splitHtmlIntoChunks(html);
-  const allProducts: ExtractedProduct[] = [];
-  let carryForward = '';
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const inputContent = carryForward + chunk;
-
-    try {
-      const response = await env.AI.run(
-        env.AI_MODEL as Parameters<typeof env.AI.run>[0],
-        {
-          prompt: productExtractionPrompt(inputContent),
-          max_tokens: 4096,
-        },
-        { gateway: { id: env.AI_GATEWAY_ID } }
-      );
-
-      const responseText =
-        typeof response === 'string'
-          ? response
-          : (response as { response?: string }).response ||
-            JSON.stringify(response);
-
-      const parsed = parseAiJsonResponse(responseText);
-      allProducts.push(...parsed.products);
-      carryForward = parsed.unprocessedContent || '';
-    } catch (error) {
-      console.error('[EXTRACTION] AI extraction error:', error);
-      carryForward = '';
-    }
-  }
-
-  return allProducts;
+  return extractProductsFromPage(env, html, pageUrl);
 };
 
 export const extractProductsFromJson = (
@@ -143,8 +230,13 @@ export const extractProductsFromJson = (
       title: String(p.title || p.name || ''),
       description: String(p.description || ''),
       images: Array.isArray(p.images) ? p.images.map(String) : [],
-      price: typeof p.price === 'number' ? p.price : undefined,
-      category: typeof p.category === 'string' ? p.category : undefined,
+      price: typeof p.price === 'number' ? p.price : null,
+      currency: typeof p.currency === 'string' ? p.currency : null,
+      category: typeof p.category === 'string' ? p.category : null,
+      brand: typeof p.brand === 'string' ? p.brand : null,
+      variants: null,
+      inStock: typeof p.inStock === 'boolean' ? p.inStock : null,
+      url: typeof p.url === 'string' ? p.url : null,
     }));
   } catch {
     return [];
@@ -164,6 +256,8 @@ export const extractProductsFromCsv = (
   const imagesIndex = headers.findIndex(h => h === 'images' || h === 'image');
   const priceIndex = headers.findIndex(h => h === 'price');
   const categoryIndex = headers.findIndex(h => h === 'category');
+  const brandIndex = headers.findIndex(h => h === 'brand');
+  const urlIndex = headers.findIndex(h => h === 'url');
 
   return lines.slice(1).map((line, index) => {
     const values = line.split(',').map(v => v.trim());
@@ -182,11 +276,13 @@ export const extractProductsFromCsv = (
       description: descIndex >= 0 ? values[descIndex] : '',
       images,
       price:
-        priceIndex >= 0
-          ? Number.parseFloat(values[priceIndex]) || undefined
-          : undefined,
-      category:
-        categoryIndex >= 0 ? values[categoryIndex] || undefined : undefined,
+        priceIndex >= 0 ? Number.parseFloat(values[priceIndex]) || null : null,
+      currency: null,
+      category: categoryIndex >= 0 ? values[categoryIndex] || null : null,
+      brand: brandIndex >= 0 ? values[brandIndex] || null : null,
+      variants: null,
+      inStock: null,
+      url: urlIndex >= 0 ? values[urlIndex] || null : null,
     };
   });
 };

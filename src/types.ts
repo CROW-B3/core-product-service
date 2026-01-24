@@ -1,12 +1,30 @@
+import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { z } from '@hono/zod-openapi';
 
 export interface Environment {
   DB: D1Database;
   R2_BUCKET: R2Bucket;
   AI: Ai;
+  BROWSER: BrowserWorker;
+  CRAWLER_KV: KVNamespace;
+  PRODUCT_CRAWL_QUEUE: Queue;
   ENVIRONMENT: 'local' | 'dev' | 'prod';
   AI_GATEWAY_ID: string;
   AI_MODEL: string;
+  CLOUDFLARE_D1_ACCOUNT_ID: string;
+  CLOUDFLARE_D1_API_TOKEN: string;
+  CRAWLER_SERVICE_URL: string;
+  CRAWLER_SERVICE_SECRET: string;
+}
+
+export interface CrawlState {
+  jobId: string;
+  baseUrl: string;
+  visitedUrls: string[];
+  pendingUrls: string[];
+  productsFound: number;
+  errors: string[];
+  startedAt: string;
 }
 
 export interface CrawlJobMessage {
@@ -79,11 +97,25 @@ export const ExtractedProductSchema = z.object({
   title: z.string(),
   description: z.string(),
   images: z.array(z.string()),
-  price: z.number().optional(),
-  category: z.string().optional(),
+  price: z.number().nullable(),
+  currency: z.string().nullable(),
+  category: z.string().nullable(),
+  brand: z.string().nullable(),
+  variants: z
+    .array(
+      z.object({
+        name: z.string(),
+        value: z.string(),
+      })
+    )
+    .nullable(),
+  inStock: z.boolean().nullable(),
+  url: z.string().nullable(),
 });
 
 export const ProductBatchExtractionSchema = z.object({
   products: z.array(ExtractedProductSchema),
-  unprocessedContent: z.string().optional(),
+  contextForNextChunk: z.string(),
+  hasMoreContent: z.boolean(),
+  confidence: z.number().min(0).max(1),
 });
