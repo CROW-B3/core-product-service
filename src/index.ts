@@ -9,13 +9,19 @@ import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
   CreateCrawlerJobRoute,
+  DebugExtractRoute,
+  DebugImageDescriptionRoute,
   GetCrawlerJobRoute,
   GetCrawlerJobsByOrgRoute,
+  GetProductAiDescriptionsRoute,
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
   TriggerCrawlerJobRoute,
 } from './routes';
+import { extractProductsFromPage } from './services/ai-extraction';
+import { crawlPageWithBrowser } from './services/browser-crawler';
+import { generateImageDescription } from './services/image-description';
 
 const app = new OpenAPIHono<{ Bindings: Environment }>();
 app.use(poweredBy());
@@ -234,6 +240,86 @@ app.openapi(TriggerCrawlerJobRoute, async context => {
 
   const updatedJob = await fetchCrawlerJobById(database, id);
   return context.json(formatCrawlerJobResponse(updatedJob!));
+});
+
+app.openapi(DebugExtractRoute, async context => {
+  const { url } = context.req.valid('json');
+  try {
+    const pageContent = await crawlPageWithBrowser(context.env, url);
+    const products = await extractProductsFromPage(
+      context.env,
+      pageContent.html,
+      url
+    );
+    return context.json({
+      html: pageContent.html.slice(0, 2000),
+      htmlLength: pageContent.html.length,
+      products,
+      error: null,
+    });
+  } catch (error) {
+    return context.json({
+      html: '',
+      htmlLength: 0,
+      products: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.openapi(GetProductAiDescriptionsRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const { id } = context.req.valid('param');
+
+  const product = await fetchProductById(database, id);
+  if (!product) return context.json({ error: 'Not found' }, 404);
+
+  const descriptions = await database
+    .select()
+    .from(schema.productAiDescription)
+    .where(eq(schema.productAiDescription.productId, id));
+
+  return context.json({
+    descriptions: descriptions.map(d => ({
+      ...d,
+      features: d.features ? JSON.parse(d.features) : null,
+      colors: d.colors ? JSON.parse(d.colors) : null,
+      materials: d.materials ? JSON.parse(d.materials) : null,
+      createdAt: d.createdAt.toISOString(),
+    })),
+  });
+});
+
+app.openapi(DebugImageDescriptionRoute, async context => {
+  const { imageUrl } = context.req.valid('json');
+  try {
+    const result = await generateImageDescription(context.env, imageUrl);
+    if (!result) {
+      return context.json({
+        imageUrl,
+        description: '',
+        features: [],
+        colors: [],
+        materials: [],
+        style: '',
+        error: 'Failed to fetch or process image',
+      });
+    }
+    return context.json({
+      ...result,
+      error: null,
+    });
+  } catch (error) {
+    return context.json({
+      imageUrl,
+      description: '',
+      features: [],
+      colors: [],
+      materials: [],
+      style: '',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
 app.doc('/docs', {
