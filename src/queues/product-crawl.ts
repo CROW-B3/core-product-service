@@ -27,12 +27,14 @@ const markJobAsInProgress = async (
 const markJobAsCompleted = async (
   database: ReturnType<typeof drizzle>,
   jobId: string,
-  productsCount: number
+  productsCount: number,
+  crawlId?: string
 ) => {
   await database
     .update(schema.crawlerJob)
     .set({
       status: 'completed',
+      crawlId: crawlId ?? null,
       productsFound: productsCount,
       productsProcessed: productsCount,
       completedAt: new Date(),
@@ -116,6 +118,47 @@ const extractErrorMessage = (error: unknown): string => {
   return error instanceof Error ? error.message : 'Unknown error';
 };
 
+const getOrganizationServiceUrl = (environment: string): string => {
+  switch (environment) {
+    case 'prod':
+      return 'https://internal.orgs.crowai.dev';
+    case 'dev':
+      return 'https://dev.internal.orgs.crowai.dev';
+    default:
+      return 'http://localhost:8004';
+  }
+};
+
+const triggerOrganizationContext = async (
+  environment: Environment,
+  organizationId: string,
+  crawlId: string
+) => {
+  try {
+    const orgServiceUrl = getOrganizationServiceUrl(environment.ENVIRONMENT);
+    const response = await fetch(
+      `${orgServiceUrl}/api/v1/organizations/${organizationId}/context/trigger`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crawl_id: crawlId }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        `[QUEUE] Failed to trigger organization context: ${response.status}`
+      );
+    } else {
+      console.warn(
+        `[QUEUE] Organization context generation triggered for ${organizationId}`
+      );
+    }
+  } catch (error) {
+    console.error('[QUEUE] Error triggering organization context:', error);
+  }
+};
+
 export const processProductCrawlJob = async (
   environment: Environment,
   message: CrawlJobMessage
@@ -128,6 +171,7 @@ export const processProductCrawlJob = async (
   try {
     const job = await fetchCrawlerJobFromDatabase(database, jobId);
     let extractedProducts: ExtractedProduct[] = [];
+    let crawlId: string | undefined;
 
     if (job.sourceType === 'url') {
       const result = await crawlAndExtractProducts(
@@ -142,6 +186,7 @@ export const processProductCrawlJob = async (
       );
 
       extractedProducts = result.products;
+      crawlId = result.crawlId;
 
       if (result.errors.length > 0) {
         console.warn(
@@ -163,7 +208,17 @@ export const processProductCrawlJob = async (
       jobId,
       extractedProducts
     );
-    await markJobAsCompleted(database, jobId, extractedProducts.length);
+    await markJobAsCompleted(
+      database,
+      jobId,
+      extractedProducts.length,
+      crawlId
+    );
+
+    // Trigger organization context generation if we have a crawl_id
+    if (crawlId && job.sourceType === 'url') {
+      await triggerOrganizationContext(environment, organizationId, crawlId);
+    }
 
     console.warn(
       `[QUEUE] Starting AI description generation for ${savedProducts.length} products`
