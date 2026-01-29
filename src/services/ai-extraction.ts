@@ -50,7 +50,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const withRetry = async <T>(
   fn: () => Promise<T>,
   maxRetries: number = 5,
-  baseDelay: number = 3000,
+  baseDelay: number = 5000,
   attempt: number = 0
 ): Promise<T> => {
   try {
@@ -192,7 +192,7 @@ export const extractProductsFromPage = async (
   const allProducts: ExtractedProduct[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await delay(3000);
+    if (i > 0) await delay(8000);
     const products = await extractProductsFromHtmlChunk(
       env,
       chunks[i],
@@ -293,7 +293,7 @@ export const extractProductsFromChunks = async (
   );
 
   for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await delay(3000);
+    if (i > 0) await delay(8000);
     const products = await extractProductsFromTextChunk(env, chunks[i], i);
     allProducts.push(...products);
   }
