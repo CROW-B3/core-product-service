@@ -20,6 +20,7 @@ export interface CrawlResult {
   pagesVisited: number;
   errors: string[];
   totalTime: number;
+  crawlId?: string;
 }
 
 const delay = (ms: number): Promise<void> =>
@@ -82,6 +83,7 @@ const crawlWithCrawlerService = async (
       pagesVisited: crawlResponse.metadata.total_pages,
       errors: crawlResponse.errors,
       totalTime: Date.now() - startTime,
+      crawlId: crawlResponse.crawl_id,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';

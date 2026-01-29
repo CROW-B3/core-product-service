@@ -19,6 +19,7 @@ export interface CrawlMetadata {
 
 export interface CrawlResponse {
   success: boolean;
+  crawl_id?: string;
   metadata: CrawlMetadata;
   chunks: TextChunk[];
   errors: string[];

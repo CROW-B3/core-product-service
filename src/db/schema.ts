@@ -7,6 +7,7 @@ export const crawlerJob = sqliteTable('crawler_job', {
   sourceType: text('sourceType').notNull(),
   sourceValue: text('sourceValue').notNull(),
   status: text('status').notNull().default('pending'),
+  crawlId: text('crawlId'),
   productsFound: integer('productsFound').notNull().default(0),
   productsProcessed: integer('productsProcessed').notNull().default(0),
   errorMessage: text('errorMessage'),
