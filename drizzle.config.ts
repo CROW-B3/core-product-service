@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { drizzleD1Config } from '@deox/drizzle-d1-utils';
-
+import { upstashCache } from 'drizzle-orm/cache/upstash';
 export default drizzleD1Config(
   {
     out: './drizzle/migrations',
