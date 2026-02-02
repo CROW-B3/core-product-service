@@ -8,17 +8,22 @@ import * as schema from './db/schema';
 import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
+  CrawlNowRoute,
+  CompleteCrawlerJobRoute,
   CreateCrawlerJobRoute,
   DebugExtractRoute,
   DebugImageDescriptionRoute,
   GetCrawlerJobRoute,
   GetCrawlerJobsByOrgRoute,
+  GetCrawlerProgressRoute,
   GetProductAiDescriptionsRoute,
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
   TriggerCrawlerJobRoute,
+  UpdateCrawlerProgressRoute,
 } from './routes';
+import { getProgress, storeProgress } from './services/crawler-progress';
 import { extractProductsFromPage } from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
 import { generateImageDescription } from './services/image-description';
@@ -320,6 +325,136 @@ app.openapi(DebugImageDescriptionRoute, async context => {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+// Direct crawl endpoint - bypasses queue, returns job ID immediately
+app.openapi(CrawlNowRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const body = context.req.valid('json');
+  const jobId = crypto.randomUUID();
+  const timestamp = new Date();
+
+  // Create job in database
+  await createCrawlerJobInDatabase(
+    database,
+    jobId,
+    body.organizationId,
+    body.onboardingId,
+    body.sourceType,
+    body.sourceValue,
+    timestamp
+  );
+
+  // Initialize progress in KV
+  await storeProgress(context.env.CRAWLER_KV, jobId, {
+    jobId,
+    status: 'pending',
+    message: 'Crawler job created, starting soon...',
+    timestamp: timestamp.toISOString(),
+  });
+
+  const origin = new URL(context.req.url).origin;
+  const completionCallbackUrl = `${origin}/api/v1/crawler-jobs/${jobId}/complete`;
+  const crawlerUrl = context.env.CRAWLER_SERVICE_URL;
+
+  context.executionCtx.waitUntil(
+    fetch(`${crawlerUrl}/api/v1/crawl`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${context.env.CRAWLER_SERVICE_SECRET}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        organizationId: body.organizationId,
+        url: body.sourceValue,
+        options: {
+          maxPages: 30,
+          maxProducts: 100,
+          useSitemap: true,
+        },
+        callbacks: {
+          completion: completionCallbackUrl,
+        },
+      }),
+    }).catch(error => {
+      console.error('Failed to call crawler:', error);
+    })
+  );
+
+  const job = await fetchCrawlerJobById(database, jobId);
+  const progressUrl = `${crawlerUrl}/api/v1/crawl/${jobId}/progress`;
+
+  return context.json({ job: formatCrawlerJobResponse(job!), progressUrl }, 201);
+});
+
+// Get current progress (polled by frontend)
+app.openapi(GetCrawlerProgressRoute, async context => {
+  const { id } = context.req.valid('param');
+
+  const progress = await getProgress(context.env.CRAWLER_KV, id);
+
+  if (!progress) {
+    return context.json({
+      jobId: id,
+      status: 'pending',
+      message: 'No progress data available yet',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  return context.json(progress);
+});
+
+// Crawler pushes progress updates here
+app.openapi(UpdateCrawlerProgressRoute, async context => {
+  const { id } = context.req.valid('param');
+  const body = context.req.valid('json');
+
+  await storeProgress(context.env.CRAWLER_KV, id, {
+    jobId: id,
+    status: body.status,
+    message: body.message,
+    progress: body.progress,
+    productsFound: body.productsFound,
+    pagesProcessed: body.pagesProcessed,
+    error: body.error,
+    timestamp: new Date().toISOString(),
+  });
+
+  return context.json({ success: true });
+});
+
+// Crawler calls this when done
+app.openapi(CompleteCrawlerJobRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const { id } = context.req.valid('param');
+  const body = context.req.valid('json');
+
+  // Update job in database
+  await database
+    .update(schema.crawlerJob)
+    .set({
+      status: body.error ? 'failed' : 'completed',
+      productsFound: body.productsFound || 0,
+      productsProcessed: body.productsFound || 0,
+      errorMessage: body.error || null,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.crawlerJob.id, id));
+
+  // Update progress in KV
+  await storeProgress(context.env.CRAWLER_KV, id, {
+    jobId: id,
+    status: body.error ? 'failed' : 'completed',
+    message: body.error || 'Crawling completed successfully!',
+    productsFound: body.productsFound,
+    error: body.error,
+    timestamp: new Date().toISOString(),
+  });
+
+  return context.json({ success: true });
 });
 
 app.doc('/docs', {
