@@ -6,7 +6,6 @@ export interface Environment {
   R2_BUCKET: R2Bucket;
   AI: Ai;
   BROWSER: BrowserWorker;
-  CRAWLER_KV: KVNamespace;
   PRODUCT_CRAWL_QUEUE: Queue;
   ENVIRONMENT: 'local' | 'dev' | 'prod';
   AI_GATEWAY_ID: string;
@@ -15,6 +14,8 @@ export interface Environment {
   CLOUDFLARE_D1_API_TOKEN: string;
   CRAWLER_SERVICE_URL: string;
   CRAWLER_SERVICE_SECRET: string;
+  AUTH_SERVICE_URL: string;
+  BETTER_AUTH_SECRET: string;
 }
 
 export interface CrawlState {
@@ -31,6 +32,7 @@ export interface CrawlJobMessage {
   jobId: string;
   organizationId: string;
   url: string;
+  crawlId?: string;
 }
 
 export const HelloWorldSchema = z
@@ -64,6 +66,16 @@ export const CreateCrawlerJobSchema = z
     sourceType: z.enum(['url', 'csv', 'json']),
     sourceValue: z.string(),
   })
+  .refine(
+    data => {
+      if (data.sourceType !== 'url') return true;
+      return URL.canParse(data.sourceValue);
+    },
+    {
+      message: 'Invalid URL format. Please provide a valid HTTP/HTTPS URL.',
+      path: ['sourceValue'],
+    }
+  )
   .openapi('CreateCrawlerJob');
 
 export const ProductSchema = z
@@ -76,7 +88,7 @@ export const ProductSchema = z
     images: z.array(z.string()),
     price: z.number().nullable(),
     category: z.string().nullable(),
-    metadata: z.record(z.unknown()).nullable(),
+    metadata: z.record(z.string(), z.unknown()).nullable(),
     crawlerJobId: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),

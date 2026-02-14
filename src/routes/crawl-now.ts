@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { CrawlerJobSchema, CreateCrawlerJobSchema } from '../types';
 
 /**
- * Direct crawl endpoint - bypasses queue for immediate execution
- * Returns job ID immediately, frontend polls /progress endpoint for updates
+ * Direct crawl endpoint - creates job and triggers infra-crawl-service in background
+ * Returns job ID immediately, processing happens asynchronously via queue
  */
 export const CrawlNowRoute = createRoute({
   method: 'post',
@@ -20,11 +20,10 @@ export const CrawlNowRoute = createRoute({
         'application/json': {
           schema: z.object({
             job: CrawlerJobSchema,
-            progressUrl: z.string().describe('URL to poll for progress updates'),
           }),
         },
       },
-      description: 'Crawler job created and started immediately',
+      description: 'Crawler job created and started in background',
     },
     400: {
       content: {
@@ -38,88 +37,8 @@ export const CrawlNowRoute = createRoute({
 });
 
 /**
- * Get current progress for a crawler job (polled by frontend)
- */
-export const GetCrawlerProgressRoute = createRoute({
-  method: 'get',
-  path: '/api/v1/crawler-jobs/{id}/progress',
-  request: {
-    params: z.object({
-      id: z.string().openapi({ param: { name: 'id', in: 'path' } }),
-    }),
-  },
-  responses: {
-    200: {
-      content: {
-        'application/json': {
-          schema: z.object({
-            jobId: z.string(),
-            status: z.enum(['pending', 'discovering', 'crawling', 'extracting', 'completed', 'failed']),
-            message: z.string(),
-            progress: z
-              .object({
-                current: z.number(),
-                total: z.number(),
-                percentage: z.number(),
-              })
-              .optional(),
-            productsFound: z.number().optional(),
-            pagesProcessed: z.number().optional(),
-            error: z.string().optional(),
-            timestamp: z.string(),
-          }),
-        },
-      },
-      description: 'Current progress',
-    },
-  },
-});
-
-/**
- * Crawler pushes progress updates to this endpoint
- */
-export const UpdateCrawlerProgressRoute = createRoute({
-  method: 'post',
-  path: '/api/v1/crawler-jobs/{id}/progress-update',
-  request: {
-    params: z.object({
-      id: z.string().openapi({ param: { name: 'id', in: 'path' } }),
-    }),
-    body: {
-      content: {
-        'application/json': {
-          schema: z.object({
-            status: z.enum(['pending', 'discovering', 'crawling', 'extracting', 'completed', 'failed']),
-            message: z.string(),
-            progress: z
-              .object({
-                current: z.number(),
-                total: z.number(),
-                percentage: z.number(),
-              })
-              .optional(),
-            productsFound: z.number().optional(),
-            pagesProcessed: z.number().optional(),
-            error: z.string().optional(),
-          }),
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      content: {
-        'application/json': {
-          schema: z.object({ success: z.boolean() }),
-        },
-      },
-      description: 'Progress updated',
-    },
-  },
-});
-
-/**
  * Crawler calls this when crawling is complete
+ * Triggers product extraction via queue
  */
 export const CompleteCrawlerJobRoute = createRoute({
   method: 'post',
@@ -133,6 +52,7 @@ export const CompleteCrawlerJobRoute = createRoute({
         'application/json': {
           schema: z.object({
             productsFound: z.number(),
+            crawlId: z.string().optional(),
             error: z.string().optional(),
           }),
         },
@@ -146,7 +66,7 @@ export const CompleteCrawlerJobRoute = createRoute({
           schema: z.object({ success: z.boolean() }),
         },
       },
-      description: 'Job completed',
+      description: 'Job completed and product extraction queued',
     },
   },
 });
