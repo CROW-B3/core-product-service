@@ -2,10 +2,6 @@ import { createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { CrawlerJobSchema, CreateCrawlerJobSchema } from '../types';
 
-/**
- * Direct crawl endpoint - creates job and triggers infra-crawl-service in background
- * Returns job ID immediately, processing happens asynchronously via queue
- */
 export const CrawlNowRoute = createRoute({
   method: 'post',
   path: '/api/v1/crawler-jobs/crawl-now',
@@ -36,10 +32,6 @@ export const CrawlNowRoute = createRoute({
   },
 });
 
-/**
- * Crawler calls this when crawling is complete
- * Triggers product extraction via queue
- */
 export const CompleteCrawlerJobRoute = createRoute({
   method: 'post',
   path: '/api/v1/crawler-jobs/{id}/complete',

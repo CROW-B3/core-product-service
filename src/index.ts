@@ -423,14 +423,12 @@ app.openapi(DebugImageDescriptionRoute, async context => {
   }
 });
 
-// Direct crawl endpoint - creates job, triggers infra-crawl-service in background
 app.openapi(CrawlNowRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const body = context.req.valid('json');
   const jobId = crypto.randomUUID();
   const timestamp = new Date();
 
-  // Create job in database
   await createCrawlerJobInDatabase(
     database,
     jobId,
@@ -445,7 +443,6 @@ app.openapi(CrawlNowRoute, async context => {
   const completionCallbackUrl = `${origin}/api/v1/crawler-jobs/${jobId}/complete`;
   const crawlerUrl = context.env.CRAWLER_SERVICE_URL;
 
-  // Fire off crawl request in background — infra-crawl-service will call back when done
   context.executionCtx.waitUntil(
     fetch(`${crawlerUrl}/api/v1/crawl`, {
       method: 'POST',
@@ -476,13 +473,11 @@ app.openapi(CrawlNowRoute, async context => {
   return context.json({ job: formatCrawlerJobResponse(job!) }, 201);
 });
 
-// Crawler calls this when done — updates DB and queues product extraction
 app.openapi(CompleteCrawlerJobRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { id } = context.req.valid('param');
   const body = context.req.valid('json');
 
-  // Update job status in database
   await database
     .update(schema.crawlerJob)
     .set({
@@ -496,7 +491,6 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
     })
     .where(eq(schema.crawlerJob.id, id));
 
-  // If crawl succeeded, queue product extraction
   if (!body.error) {
     const job = await fetchCrawlerJobById(database, id);
     if (job) {

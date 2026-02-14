@@ -185,6 +185,102 @@ const triggerOrganizationContext = async (
   }
 };
 
+const extractProductsFromPreCrawledData = async (
+  environment: Environment,
+  crawlId: string
+): Promise<ExtractedProduct[]> => {
+  console.warn(`[QUEUE] Fetching pre-crawled data for crawlId: ${crawlId}`);
+  const crawlData = await fetchCrawlResults(environment, crawlId);
+  return extractProductsFromChunks(
+    environment,
+    crawlData.chunks as TextChunk[]
+  );
+};
+
+const extractProductsFromDirectCrawl = async (
+  environment: Environment,
+  sourceValue: string
+): Promise<{ products: ExtractedProduct[]; crawlId?: string }> => {
+  const result = await crawlAndExtractProducts(environment, sourceValue, {
+    maxPages: 30,
+    maxProducts: 100,
+    useSitemap: true,
+    useBrowserDiscovery: true,
+  });
+
+  if (result.errors.length > 0) {
+    console.warn(
+      `[QUEUE] Crawl completed with ${result.errors.length} errors:`,
+      result.errors
+    );
+  }
+
+  return { products: result.products, crawlId: result.crawlId };
+};
+
+const extractProductsBySourceType = async (
+  environment: Environment,
+  job: { sourceType: string; sourceValue: string },
+  messageCrawlId?: string
+): Promise<{ extractedProducts: ExtractedProduct[]; crawlId?: string }> => {
+  if (job.sourceType === 'json') {
+    return { extractedProducts: extractProductsFromJson(job.sourceValue) };
+  }
+
+  if (job.sourceType === 'csv') {
+    return { extractedProducts: extractProductsFromCsv(job.sourceValue) };
+  }
+
+  if (job.sourceType !== 'url') {
+    throw new Error(`Unsupported source type: ${job.sourceType}`);
+  }
+
+  if (messageCrawlId) {
+    const extractedProducts = await extractProductsFromPreCrawledData(
+      environment,
+      messageCrawlId
+    );
+    return { extractedProducts, crawlId: messageCrawlId };
+  }
+
+  const directResult = await extractProductsFromDirectCrawl(
+    environment,
+    job.sourceValue
+  );
+  return {
+    extractedProducts: directResult.products,
+    crawlId: directResult.crawlId,
+  };
+};
+
+const generateImageDescriptionsForProducts = async (
+  environment: Environment,
+  savedProducts: SavedProduct[]
+) => {
+  const productsWithImages = savedProducts.filter(p => p.images.length > 0);
+  if (productsWithImages.length === 0) return;
+
+  console.warn(
+    `[QUEUE] Generating AI descriptions for ${productsWithImages.length} products (best-effort)`
+  );
+
+  for (const product of productsWithImages) {
+    try {
+      await generateDescriptionsForProduct(environment, {
+        id: product.id,
+        images: product.images.slice(0, 3),
+      });
+    } catch (descriptionError) {
+      console.error(
+        `[QUEUE] Failed to generate descriptions for product ${product.id}:`,
+        descriptionError
+      );
+    }
+  }
+
+  console.warn(`[QUEUE] AI description generation complete`);
+};
+
 export const processProductCrawlJob = async (
   environment: Environment,
   message: CrawlJobMessage
@@ -196,50 +292,12 @@ export const processProductCrawlJob = async (
 
   try {
     const job = await fetchCrawlerJobFromDatabase(database, jobId);
-    let extractedProducts: ExtractedProduct[] = [];
-    let crawlId: string | undefined = messageCrawlId;
 
-    if (job.sourceType === 'url') {
-      if (messageCrawlId) {
-        // Crawl already done by infra-crawl-service — fetch results and extract products
-        console.warn(
-          `[QUEUE] Fetching pre-crawled data for crawlId: ${messageCrawlId}`
-        );
-        const crawlData = await fetchCrawlResults(environment, messageCrawlId);
-        extractedProducts = await extractProductsFromChunks(
-          environment,
-          crawlData.chunks as TextChunk[]
-        );
-      } else {
-        // Legacy path: no pre-crawled data, crawl directly
-        const result = await crawlAndExtractProducts(
-          environment,
-          job.sourceValue,
-          {
-            maxPages: 30,
-            maxProducts: 100,
-            useSitemap: true,
-            useBrowserDiscovery: true,
-          }
-        );
-
-        extractedProducts = result.products;
-        crawlId = result.crawlId;
-
-        if (result.errors.length > 0) {
-          console.warn(
-            `[QUEUE] Crawl completed with ${result.errors.length} errors:`,
-            result.errors
-          );
-        }
-      }
-    } else if (job.sourceType === 'json') {
-      extractedProducts = extractProductsFromJson(job.sourceValue);
-    } else if (job.sourceType === 'csv') {
-      extractedProducts = extractProductsFromCsv(job.sourceValue);
-    } else {
-      throw new Error(`Unsupported source type: ${job.sourceType}`);
-    }
+    const { extractedProducts, crawlId } = await extractProductsBySourceType(
+      environment,
+      job,
+      messageCrawlId
+    );
 
     console.warn(
       `[QUEUE] Extracted ${extractedProducts.length} products, saving to DB`
@@ -260,33 +318,11 @@ export const processProductCrawlJob = async (
 
     console.warn(`[QUEUE] Saved ${savedProducts.length} products to DB`);
 
-    // Trigger organization context generation if we have a crawl_id
     if (crawlId && job.sourceType === 'url') {
       await triggerOrganizationContext(environment, organizationId, crawlId);
     }
 
-    // Generate AI image descriptions (best-effort, don't fail the job)
-    const productsWithImages = savedProducts.filter(p => p.images.length > 0);
-    if (productsWithImages.length > 0) {
-      console.warn(
-        `[QUEUE] Generating AI descriptions for ${productsWithImages.length} products (best-effort)`
-      );
-      for (const product of productsWithImages) {
-        try {
-          await generateDescriptionsForProduct(environment, {
-            id: product.id,
-            images: product.images.slice(0, 3),
-          });
-        } catch (descError) {
-          console.error(
-            `[QUEUE] Failed to generate descriptions for product ${product.id}:`,
-            descError
-          );
-          // Continue — don't let image description failures block the pipeline
-        }
-      }
-      console.warn(`[QUEUE] AI description generation complete`);
-    }
+    await generateImageDescriptionsForProducts(environment, savedProducts);
   } catch (error) {
     console.error(`[QUEUE] Job ${jobId} failed:`, error);
     await markJobAsFailed(database, jobId, extractErrorMessage(error));
