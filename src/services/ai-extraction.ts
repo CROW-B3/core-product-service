@@ -100,6 +100,9 @@ const splitIntoChunks = (
   return chunks;
 };
 
+const BATCH_SIZE = 5;
+const BATCH_DELAY_MS = 1000;
+
 const isGenericProductName = (title: string): boolean => {
   const genericPatterns = [
     /^product\s*\d*$/i,
@@ -191,15 +194,23 @@ export const extractProductsFromPage = async (
 
   const allProducts: ExtractedProduct[] = [];
 
-  for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await delay(8000);
-    const products = await extractProductsFromHtmlChunk(
-      env,
-      chunks[i],
-      i,
-      pageUrl
+  for (
+    let batchStart = 0;
+    batchStart < chunks.length;
+    batchStart += BATCH_SIZE
+  ) {
+    if (batchStart > 0) await delay(BATCH_DELAY_MS);
+    const batch = chunks.slice(batchStart, batchStart + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map((chunk, i) =>
+        extractProductsFromHtmlChunk(env, chunk, batchStart + i, pageUrl)
+      )
     );
-    allProducts.push(...products);
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled') {
+        allProducts.push(...result.value);
+      }
+    }
   }
 
   const deduplicated = deduplicateProducts(allProducts);
@@ -289,13 +300,34 @@ export const extractProductsFromChunks = async (
   const allProducts: ExtractedProduct[] = [];
 
   console.warn(
-    `[AI] Processing ${chunks.length} text chunks from crawler service`
+    `[AI] Processing ${chunks.length} text chunks in batches of ${BATCH_SIZE}`
   );
 
-  for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await delay(8000);
-    const products = await extractProductsFromTextChunk(env, chunks[i], i);
-    allProducts.push(...products);
+  for (
+    let batchStart = 0;
+    batchStart < chunks.length;
+    batchStart += BATCH_SIZE
+  ) {
+    if (batchStart > 0) await delay(BATCH_DELAY_MS);
+
+    const batch = chunks.slice(batchStart, batchStart + BATCH_SIZE);
+    console.warn(
+      `[AI] Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)} (chunks ${batchStart + 1}-${batchStart + batch.length})`
+    );
+
+    const batchResults = await Promise.allSettled(
+      batch.map((chunk, i) =>
+        extractProductsFromTextChunk(env, chunk, batchStart + i)
+      )
+    );
+
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled') {
+        allProducts.push(...result.value);
+      } else {
+        console.error(`[AI] Batch chunk failed:`, result.reason);
+      }
+    }
   }
 
   const deduplicated = deduplicateProducts(allProducts);

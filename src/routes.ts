@@ -7,12 +7,7 @@ import {
   ProductSchema,
 } from './types';
 
-export {
-  CrawlNowRoute,
-  GetCrawlerProgressRoute,
-  UpdateCrawlerProgressRoute,
-  CompleteCrawlerJobRoute,
-} from './routes/crawl-now';
+export { CompleteCrawlerJobRoute, CrawlNowRoute } from './routes/crawl-now';
 
 export const HelloWorldRoute = createRoute({
   method: 'get',

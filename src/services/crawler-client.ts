@@ -72,6 +72,48 @@ export const crawlWithService = async (
   return response.json() as Promise<CrawlResponse>;
 };
 
+export const fetchCrawlResults = async (
+  env: Environment,
+  crawlId: string
+): Promise<CrawlResponse> => {
+  const crawlerUrl = env.CRAWLER_SERVICE_URL;
+  const crawlerSecret = env.CRAWLER_SERVICE_SECRET;
+
+  if (!crawlerUrl) {
+    throw new Error('CRAWLER_SERVICE_URL not configured');
+  }
+
+  const headers: Record<string, string> = {};
+  if (crawlerSecret) {
+    headers.Authorization = `Bearer ${crawlerSecret}`;
+  }
+
+  const response = await fetch(`${crawlerUrl}/crawls/${crawlId}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to fetch crawl results: ${response.status} - ${errorText}`
+    );
+  }
+
+  const data = (await response.json()) as {
+    metadata: CrawlMetadata;
+    chunks: TextChunk[];
+  };
+
+  return {
+    success: true,
+    crawl_id: crawlId,
+    metadata: data.metadata,
+    chunks: data.chunks,
+    errors: [],
+  };
+};
+
 export const isCrawlerServiceAvailable = async (
   env: Environment
 ): Promise<boolean> => {

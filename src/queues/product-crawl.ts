@@ -1,8 +1,12 @@
+import type { TextChunk } from '../services/ai-extraction';
 import type { ExtractedProduct } from '../services/extraction';
 import type { CrawlJobMessage, Environment } from '../types';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
+import { sign } from 'hono/jwt';
 import * as schema from '../db/schema';
+import { extractProductsFromChunks } from '../services/ai-extraction';
+import { fetchCrawlResults } from '../services/crawler-client';
 import {
   crawlAndExtractProducts,
   extractProductsFromCsv,
@@ -129,6 +133,26 @@ const getOrganizationServiceUrl = (environment: string): string => {
   }
 };
 
+const createSystemHeaders = async (
+  secret: string
+): Promise<Record<string, string>> => {
+  const token = await sign(
+    {
+      sub: 'system',
+      type: 'system',
+      service: 'product-service',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    },
+    secret,
+    'HS256'
+  );
+  return {
+    'X-System-Token': 'true',
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+};
+
 const triggerOrganizationContext = async (
   environment: Environment,
   organizationId: string,
@@ -136,18 +160,20 @@ const triggerOrganizationContext = async (
 ) => {
   try {
     const orgServiceUrl = getOrganizationServiceUrl(environment.ENVIRONMENT);
+    const headers = await createSystemHeaders(environment.BETTER_AUTH_SECRET);
     const response = await fetch(
       `${orgServiceUrl}/api/v1/organizations/${organizationId}/context/trigger`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ crawl_id: crawlId }),
       }
     );
 
     if (!response.ok) {
+      const errorText = await response.text();
       console.error(
-        `[QUEUE] Failed to trigger organization context: ${response.status}`
+        `[QUEUE] Failed to trigger organization context: ${response.status} ${errorText}`
       );
     } else {
       console.warn(
@@ -164,35 +190,48 @@ export const processProductCrawlJob = async (
   message: CrawlJobMessage
 ) => {
   const database = drizzle(environment.DB, { schema });
-  const { jobId, organizationId } = message;
+  const { jobId, organizationId, crawlId: messageCrawlId } = message;
 
   await markJobAsInProgress(database, jobId);
 
   try {
     const job = await fetchCrawlerJobFromDatabase(database, jobId);
     let extractedProducts: ExtractedProduct[] = [];
-    let crawlId: string | undefined;
+    let crawlId: string | undefined = messageCrawlId;
 
     if (job.sourceType === 'url') {
-      const result = await crawlAndExtractProducts(
-        environment,
-        job.sourceValue,
-        {
-          maxPages: 30,
-          maxProducts: 100,
-          useSitemap: true,
-          useBrowserDiscovery: true,
-        }
-      );
-
-      extractedProducts = result.products;
-      crawlId = result.crawlId;
-
-      if (result.errors.length > 0) {
+      if (messageCrawlId) {
+        // Crawl already done by infra-crawl-service — fetch results and extract products
         console.warn(
-          `[QUEUE] Crawl completed with ${result.errors.length} errors:`,
-          result.errors
+          `[QUEUE] Fetching pre-crawled data for crawlId: ${messageCrawlId}`
         );
+        const crawlData = await fetchCrawlResults(environment, messageCrawlId);
+        extractedProducts = await extractProductsFromChunks(
+          environment,
+          crawlData.chunks as TextChunk[]
+        );
+      } else {
+        // Legacy path: no pre-crawled data, crawl directly
+        const result = await crawlAndExtractProducts(
+          environment,
+          job.sourceValue,
+          {
+            maxPages: 30,
+            maxProducts: 100,
+            useSitemap: true,
+            useBrowserDiscovery: true,
+          }
+        );
+
+        extractedProducts = result.products;
+        crawlId = result.crawlId;
+
+        if (result.errors.length > 0) {
+          console.warn(
+            `[QUEUE] Crawl completed with ${result.errors.length} errors:`,
+            result.errors
+          );
+        }
       }
     } else if (job.sourceType === 'json') {
       extractedProducts = extractProductsFromJson(job.sourceValue);
@@ -201,6 +240,10 @@ export const processProductCrawlJob = async (
     } else {
       throw new Error(`Unsupported source type: ${job.sourceType}`);
     }
+
+    console.warn(
+      `[QUEUE] Extracted ${extractedProducts.length} products, saving to DB`
+    );
 
     const savedProducts = await saveProductsToDatabase(
       database,
@@ -215,16 +258,20 @@ export const processProductCrawlJob = async (
       crawlId
     );
 
+    console.warn(`[QUEUE] Saved ${savedProducts.length} products to DB`);
+
     // Trigger organization context generation if we have a crawl_id
     if (crawlId && job.sourceType === 'url') {
       await triggerOrganizationContext(environment, organizationId, crawlId);
     }
 
-    console.warn(
-      `[QUEUE] Starting AI description generation for ${savedProducts.length} products`
-    );
-    for (const product of savedProducts) {
-      if (product.images.length > 0) {
+    // Generate AI image descriptions (best-effort, don't fail the job)
+    const productsWithImages = savedProducts.filter(p => p.images.length > 0);
+    if (productsWithImages.length > 0) {
+      console.warn(
+        `[QUEUE] Generating AI descriptions for ${productsWithImages.length} products (best-effort)`
+      );
+      for (const product of productsWithImages) {
         try {
           await generateDescriptionsForProduct(environment, {
             id: product.id,
@@ -235,10 +282,11 @@ export const processProductCrawlJob = async (
             `[QUEUE] Failed to generate descriptions for product ${product.id}:`,
             descError
           );
+          // Continue — don't let image description failures block the pipeline
         }
       }
+      console.warn(`[QUEUE] AI description generation complete`);
     }
-    console.warn(`[QUEUE] AI description generation complete`);
   } catch (error) {
     console.error(`[QUEUE] Job ${jobId} failed:`, error);
     await markJobAsFailed(database, jobId, extractErrorMessage(error));
