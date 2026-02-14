@@ -13,16 +13,11 @@
     "ENVIRONMENT": "local",
     "AI_GATEWAY_ID": "crow-ai-gateway",
     "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
+    "AUTH_SERVICE_URL": "https://internal.auth-api.crowai.dev",
   },
   "browser": {
     "binding": "BROWSER",
   },
-  "kv_namespaces": [
-    {
-      "binding": "CRAWLER_KV",
-      "id": "crow-product-crawler-kv",
-    },
-  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -61,7 +56,9 @@
         "ENVIRONMENT": "dev",
         "AI_GATEWAY_ID": "crow-ai-gateway",
         "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
-        "CRAWLER_SERVICE_URL": "https://crawler.crowai.dev",
+        "CRAWLER_SERVICE_URL": "https://infra-crawl-service-dev.bitbybit-b3.workers.dev",
+        "CRAWLER_SERVICE_SECRET": "crow-crawler-dev-secret-2024",
+        "AUTH_SERVICE_URL": "https://dev.internal.auth-api.crowai.dev",
       },
       "ai": {
         "binding": "AI",
@@ -69,12 +66,6 @@
       "browser": {
         "binding": "BROWSER",
       },
-      "kv_namespaces": [
-        {
-          "binding": "CRAWLER_KV",
-          "id": "crow-product-crawler-kv-dev",
-        },
-      ],
       "routes": [
         {
           "pattern": "dev.internal.products.crowai.dev",
@@ -107,6 +98,8 @@
             "queue": "crow-product-crawl-queue-dev",
             "max_batch_size": 1,
             "max_batch_timeout": 30,
+            "max_retries": 3,
+            "retry_delay": 60,
           },
         ],
       },
@@ -117,6 +110,9 @@
         "AI_GATEWAY_ID": "crow-ai-gateway",
         "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
         "CRAWLER_SERVICE_URL": "http://localhost:8014",
+        "AUTH_SERVICE_URL": "http://localhost:8001",
+        "BETTER_AUTH_SECRET": "DF1IKzRMqusC5A/56EjCFuCAKVgPNoW6pibNi5IEsFw=",
+        "CRAWLER_SERVICE_SECRET": "crow-crawler-local-secret-2024"
       },
       "ai": {
         "binding": "AI",
@@ -125,13 +121,6 @@
       "browser": {
         "binding": "BROWSER",
       },
-      "kv_namespaces": [
-        {
-          "binding": "CRAWLER_KV",
-          "id": "crow-product-crawler-kv-local",
-          "preview_id": "crow-product-crawler-kv-local",
-        },
-      ],
       "d1_databases": [
         {
           "binding": "DB",
@@ -158,6 +147,8 @@
             "queue": "crow-product-crawl-queue-local",
             "max_batch_size": 1,
             "max_batch_timeout": 30,
+            "max_retries": 3,
+            "retry_delay": 60,
           },
         ],
       },

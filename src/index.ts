@@ -4,35 +4,34 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
-import * as schema from './db/schema';
-import { validateEnv } from './config/validate-env';
 import { createLogger } from './config/logger';
-import { handleErrorResponse } from './utils/error-handler';
-import { HealthCheckRoute, ReadinessCheckRoute } from './routes/health';
+import { validateEnv } from './config/validate-env';
+import * as schema from './db/schema';
 import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
-  CrawlNowRoute,
   CompleteCrawlerJobRoute,
+  CrawlNowRoute,
   CreateCrawlerJobRoute,
   DebugExtractRoute,
   DebugImageDescriptionRoute,
   GetCrawlerJobRoute,
   GetCrawlerJobsByOrgRoute,
-  GetCrawlerProgressRoute,
   GetProductAiDescriptionsRoute,
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
   TriggerCrawlerJobRoute,
-  UpdateCrawlerProgressRoute,
 } from './routes';
-import { getProgress, storeProgress } from './services/crawler-progress';
+import { HealthCheckRoute, ReadinessCheckRoute } from './routes/health';
 import { extractProductsFromPage } from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
 import { generateImageDescription } from './services/image-description';
+import { handleErrorResponse } from './utils/error-handler';
 
-async function checkDatabaseHealth(db: ReturnType<typeof drizzle>): Promise<boolean> {
+async function checkDatabaseHealth(
+  db: ReturnType<typeof drizzle>
+): Promise<boolean> {
   try {
     await db.run('SELECT 1');
     return true;
@@ -188,12 +187,15 @@ app.openapi(ReadinessCheckRoute, async c => {
   const isReady = isDatabaseHealthy;
   const statusCode = isReady ? 200 : 503;
 
-  return c.json({
-    ready: isReady,
-    checks: {
-      database: isDatabaseHealthy,
+  return c.json(
+    {
+      ready: isReady,
+      checks: {
+        database: isDatabaseHealthy,
+      },
     },
-  }, statusCode);
+    statusCode
+  );
 });
 
 app.openapi(HelloWorldRoute, context => {
@@ -232,7 +234,18 @@ app.openapi(GetCrawlerJobRoute, async context => {
   const { id } = context.req.valid('param');
 
   const job = await fetchCrawlerJobById(database, id);
-  if (!job) return context.json({ error: 'Not found' }, 404);
+  if (!job) {
+    return context.json(
+      {
+        error: {
+          code: 'CRAWLER_JOB_NOT_FOUND',
+          message: 'Crawler job not found',
+          timestamp: new Date().toISOString(),
+        },
+      },
+      404
+    );
+  }
 
   return context.json(formatCrawlerJobResponse(job));
 });
@@ -250,7 +263,18 @@ app.openapi(GetProductRoute, async context => {
   const { id } = context.req.valid('param');
 
   const product = await fetchProductById(database, id);
-  if (!product) return context.json({ error: 'Not found' }, 404);
+  if (!product) {
+    return context.json(
+      {
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+          timestamp: new Date().toISOString(),
+        },
+      },
+      404
+    );
+  }
 
   return context.json(formatProductResponse(product));
 });
@@ -285,7 +309,18 @@ app.openapi(TriggerCrawlerJobRoute, async context => {
   const { id } = context.req.valid('param');
 
   const job = await fetchCrawlerJobById(database, id);
-  if (!job) return context.json({ error: 'Not found' }, 404);
+  if (!job) {
+    return context.json(
+      {
+        error: {
+          code: 'CRAWLER_JOB_NOT_FOUND',
+          message: 'Crawler job not found',
+          timestamp: new Date().toISOString(),
+        },
+      },
+      404
+    );
+  }
 
   await processProductCrawlJob(context.env, {
     jobId: id,
@@ -327,7 +362,18 @@ app.openapi(GetProductAiDescriptionsRoute, async context => {
   const { id } = context.req.valid('param');
 
   const product = await fetchProductById(database, id);
-  if (!product) return context.json({ error: 'Not found' }, 404);
+  if (!product) {
+    return context.json(
+      {
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+          timestamp: new Date().toISOString(),
+        },
+      },
+      404
+    );
+  }
 
   const descriptions = await database
     .select()
@@ -377,7 +423,7 @@ app.openapi(DebugImageDescriptionRoute, async context => {
   }
 });
 
-// Direct crawl endpoint - bypasses queue, returns job ID immediately
+// Direct crawl endpoint - creates job, triggers infra-crawl-service in background
 app.openapi(CrawlNowRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const body = context.req.valid('json');
@@ -395,24 +441,17 @@ app.openapi(CrawlNowRoute, async context => {
     timestamp
   );
 
-  // Initialize progress in KV
-  await storeProgress(context.env.CRAWLER_KV, jobId, {
-    jobId,
-    status: 'pending',
-    message: 'Crawler job created, starting soon...',
-    timestamp: timestamp.toISOString(),
-  });
-
   const origin = new URL(context.req.url).origin;
   const completionCallbackUrl = `${origin}/api/v1/crawler-jobs/${jobId}/complete`;
   const crawlerUrl = context.env.CRAWLER_SERVICE_URL;
 
+  // Fire off crawl request in background — infra-crawl-service will call back when done
   context.executionCtx.waitUntil(
     fetch(`${crawlerUrl}/api/v1/crawl`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${context.env.CRAWLER_SERVICE_SECRET}`,
+        Authorization: `Bearer ${context.env.CRAWLER_SERVICE_SECRET}`,
       },
       body: JSON.stringify({
         jobId,
@@ -433,59 +472,22 @@ app.openapi(CrawlNowRoute, async context => {
   );
 
   const job = await fetchCrawlerJobById(database, jobId);
-  const progressUrl = `${crawlerUrl}/api/v1/crawl/${jobId}/progress`;
 
-  return context.json({ job: formatCrawlerJobResponse(job!), progressUrl }, 201);
+  return context.json({ job: formatCrawlerJobResponse(job!) }, 201);
 });
 
-// Get current progress (polled by frontend)
-app.openapi(GetCrawlerProgressRoute, async context => {
-  const { id } = context.req.valid('param');
-
-  const progress = await getProgress(context.env.CRAWLER_KV, id);
-
-  if (!progress) {
-    return context.json({
-      jobId: id,
-      status: 'pending',
-      message: 'No progress data available yet',
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  return context.json(progress);
-});
-
-// Crawler pushes progress updates here
-app.openapi(UpdateCrawlerProgressRoute, async context => {
-  const { id } = context.req.valid('param');
-  const body = context.req.valid('json');
-
-  await storeProgress(context.env.CRAWLER_KV, id, {
-    jobId: id,
-    status: body.status,
-    message: body.message,
-    progress: body.progress,
-    productsFound: body.productsFound,
-    pagesProcessed: body.pagesProcessed,
-    error: body.error,
-    timestamp: new Date().toISOString(),
-  });
-
-  return context.json({ success: true });
-});
-
-// Crawler calls this when done
+// Crawler calls this when done — updates DB and queues product extraction
 app.openapi(CompleteCrawlerJobRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { id } = context.req.valid('param');
   const body = context.req.valid('json');
 
-  // Update job in database
+  // Update job status in database
   await database
     .update(schema.crawlerJob)
     .set({
       status: body.error ? 'failed' : 'completed',
+      crawlId: body.crawlId ?? null,
       productsFound: body.productsFound || 0,
       productsProcessed: body.productsFound || 0,
       errorMessage: body.error || null,
@@ -494,15 +496,18 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
     })
     .where(eq(schema.crawlerJob.id, id));
 
-  // Update progress in KV
-  await storeProgress(context.env.CRAWLER_KV, id, {
-    jobId: id,
-    status: body.error ? 'failed' : 'completed',
-    message: body.error || 'Crawling completed successfully!',
-    productsFound: body.productsFound,
-    error: body.error,
-    timestamp: new Date().toISOString(),
-  });
+  // If crawl succeeded, queue product extraction
+  if (!body.error) {
+    const job = await fetchCrawlerJobById(database, id);
+    if (job) {
+      await context.env.PRODUCT_CRAWL_QUEUE.send({
+        jobId: job.id,
+        organizationId: job.organizationId,
+        url: job.sourceValue,
+        crawlId: body.crawlId,
+      });
+    }
+  }
 
   return context.json({ success: true });
 });
