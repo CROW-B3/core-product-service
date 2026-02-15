@@ -4,12 +4,14 @@
   "account_id": "8f0203259905d8923687286c84921e6c",
   "main": "src/index.ts",
   "compatibility_date": "2025-12-17",
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
   },
   "vars": {
     "ENVIRONMENT": "prod",
+    "AXIOM_DATASET": "crow-traces",
   },
   "d1_databases": [
     {
@@ -31,6 +33,7 @@
     "dev": {
       "vars": {
         "ENVIRONMENT": "dev",
+        "AXIOM_DATASET": "crow-traces",
       },
       "routes": [
         { "pattern": "dev.internal.products.crowai.dev", "custom_domain": true }
@@ -52,6 +55,7 @@
     "local": {
       "vars": {
         "ENVIRONMENT": "local",
+        "AXIOM_DATASET": "crow-traces",
       },
       "d1_databases": [
         {
