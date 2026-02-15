@@ -1,7 +1,9 @@
 import type { Environment } from './types';
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { instrument } from '@microlabs/otel-cf-workers';
 import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
+import { createOtelConfig } from './lib/otel';
 import { HelloWorldRoute } from './routes';
 
 const app = new OpenAPIHono<{ Bindings: Environment }>();
@@ -18,4 +20,4 @@ app.doc('/docs', {
     title: 'My API',
   },
 });
-export default app;
+export default instrument(app, createOtelConfig('crow-core-product-service'));
