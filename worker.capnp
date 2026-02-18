@@ -14,4 +14,7 @@ const worker :Workerd.Worker = (
         (name = "worker", esModule = embed "index.js"),
     ],
     compatibilityDate = "2025-12-17",
+    bindings = [
+        (name = "ENVIRONMENT", text = "local"),
+    ],
 );
