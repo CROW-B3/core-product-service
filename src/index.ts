@@ -1,6 +1,6 @@
 import type { CrawlJobMessage, Environment } from './types';
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
@@ -21,12 +21,14 @@ import {
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
+  ProductSearchRoute,
   TriggerCrawlerJobRoute,
 } from './routes';
 import { HealthCheckRoute, ReadinessCheckRoute } from './routes/health';
 import { extractProductsFromPage } from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
 import { generateImageDescription } from './services/image-description';
+import { ftsSearch, semanticSearch } from './services/vectorize';
 import { handleErrorResponse } from './utils/error-handler';
 
 async function checkDatabaseHealth(
@@ -504,6 +506,53 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
   }
 
   return context.json({ success: true });
+});
+
+app.openapi(ProductSearchRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const {
+    q,
+    organizationId,
+    limit: limitStr,
+    mode,
+  } = context.req.valid('query');
+  const limit = Number.parseInt(limitStr || '20', 10);
+
+  if (mode === 'fts') {
+    const results = await ftsSearch(
+      context.env.DB as unknown as Parameters<typeof ftsSearch>[0],
+      organizationId,
+      q,
+      limit
+    );
+    return context.json({
+      results: (results as Array<{ id: string; title: string }>).map(p => ({
+        id: p.id,
+        title: p.title,
+      })),
+    });
+  }
+
+  // Default: semantic search
+  const matches = await semanticSearch(context.env, organizationId, q, limit);
+  if (!matches.length) return context.json({ results: [] });
+
+  const ids = matches.map(m => m.id);
+  const products = await database
+    .select()
+    .from(schema.product)
+    .where(inArray(schema.product.id, ids));
+
+  const productMap = new Map(products.map(p => [p.id, p]));
+  const results = matches
+    .map(m => {
+      const p = productMap.get(m.id);
+      if (!p) return null;
+      return { id: p.id, title: p.title, score: m.score };
+    })
+    .filter(Boolean) as Array<{ id: string; title: string; score: number }>;
+
+  return context.json({ results });
 });
 
 app.doc('/api/docs', {

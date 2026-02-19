@@ -224,3 +224,34 @@ export const DebugImageDescriptionRoute = createRoute({
     },
   },
 });
+
+export const ProductSearchRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/products/search',
+  request: {
+    query: z.object({
+      q: z.string(),
+      organizationId: z.string(),
+      limit: z.string().optional(),
+      mode: z.enum(['semantic', 'fts', 'hybrid']).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            results: z.array(
+              z.object({
+                id: z.string(),
+                title: z.string(),
+                score: z.number().optional(),
+              })
+            ),
+          }),
+        },
+      },
+      description: 'Product search results',
+    },
+  },
+});
