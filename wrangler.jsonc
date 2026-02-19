@@ -18,6 +18,7 @@
   "browser": {
     "binding": "BROWSER",
   },
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "crow-products" }],
   "d1_databases": [
     {
       "binding": "DB",
@@ -66,6 +67,7 @@
       "browser": {
         "binding": "BROWSER",
       },
+      "vectorize": [{ "binding": "VECTORIZE", "index_name": "crow-products-dev" }],
       "routes": [
         {
           "pattern": "dev.internal.products.crowai.dev",
@@ -121,6 +123,7 @@
       "browser": {
         "binding": "BROWSER",
       },
+      "vectorize": [{ "binding": "VECTORIZE", "index_name": "crow-products-dev" }],
       "d1_databases": [
         {
           "binding": "DB",

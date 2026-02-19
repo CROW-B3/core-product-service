@@ -323,6 +323,31 @@ export const processProductCrawlJob = async (
     }
 
     await generateImageDescriptionsForProducts(environment, savedProducts);
+
+    // Embed products for semantic search
+    try {
+      const { embedProduct: embedProductFn } =
+        await import('../services/vectorize');
+      for (const savedProduct of savedProducts) {
+        const product = await database
+          .select()
+          .from(schema.product)
+          .where(eq(schema.product.id, savedProduct.id))
+          .limit(1);
+        if (!product[0]) continue;
+        const descriptions = await database
+          .select()
+          .from(schema.productAiDescription)
+          .where(eq(schema.productAiDescription.productId, savedProduct.id));
+        await embedProductFn(
+          environment,
+          product[0],
+          descriptions.map(d => ({ description: d.description }))
+        );
+      }
+    } catch (embedError) {
+      console.error('[QUEUE] Failed to embed products:', embedError);
+    }
   } catch (error) {
     console.error(`[QUEUE] Job ${jobId} failed:`, error);
     await markJobAsFailed(database, jobId, extractErrorMessage(error));
