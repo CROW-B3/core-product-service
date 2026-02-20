@@ -21,4 +21,10 @@ app.doc('/docs', {
 
 export default {
   fetch: app.fetch,
+  async queue(batch, _env, _ctx) {
+    for (const message of batch.messages) {
+      console.warn('Processing message:', message.id);
+      message.ack();
+    }
+  },
 };
