@@ -18,4 +18,7 @@ app.doc('/docs', {
     title: 'My API',
   },
 });
-export default app;
+
+export default {
+  fetch: app.fetch,
+};
