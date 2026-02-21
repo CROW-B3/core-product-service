@@ -207,11 +207,13 @@ app.openapi(CreateCrawlerJobRoute, async context => {
   const body = context.req.valid('json');
   const jobId = crypto.randomUUID();
   const timestamp = new Date();
+  const organizationId =
+    body.organizationId ?? context.req.header('X-Organization-Id') ?? '';
 
   await createCrawlerJobInDatabase(
     database,
     jobId,
-    body.organizationId,
+    organizationId,
     body.onboardingId,
     body.sourceType,
     body.sourceValue,
@@ -221,7 +223,7 @@ app.openapi(CreateCrawlerJobRoute, async context => {
   await sendCrawlJobToQueue(
     context.env.PRODUCT_CRAWL_QUEUE,
     jobId,
-    body.organizationId,
+    organizationId,
     body.sourceValue
   );
 
@@ -428,11 +430,13 @@ app.openapi(CrawlNowRoute, async context => {
   const body = context.req.valid('json');
   const jobId = crypto.randomUUID();
   const timestamp = new Date();
+  const organizationId =
+    body.organizationId ?? context.req.header('X-Organization-Id') ?? '';
 
   await createCrawlerJobInDatabase(
     database,
     jobId,
-    body.organizationId,
+    organizationId,
     body.onboardingId,
     body.sourceType,
     body.sourceValue,
@@ -452,7 +456,7 @@ app.openapi(CrawlNowRoute, async context => {
       },
       body: JSON.stringify({
         jobId,
-        organizationId: body.organizationId,
+        organizationId,
         url: body.sourceValue,
         options: {
           maxPages: 30,

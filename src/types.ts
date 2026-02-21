@@ -61,7 +61,7 @@ export const CrawlerJobSchema = z
 
 export const CreateCrawlerJobSchema = z
   .object({
-    organizationId: z.string(),
+    organizationId: z.string().optional(),
     onboardingId: z.string().optional(),
     sourceType: z.enum(['url', 'csv', 'json']),
     sourceValue: z.string(),
