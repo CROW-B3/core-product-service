@@ -1,0 +1,7 @@
+services:
+  product-service:
+    build: .
+    ports:
+      - '8003:8080'
+    environment:
+      - ENVIRONMENT=local
