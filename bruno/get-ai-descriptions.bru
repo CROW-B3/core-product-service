@@ -1,0 +1,19 @@
+meta {
+  name: Get AI Descriptions
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{productId}}/ai-descriptions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+headers {
+  Content-Type: application/json
+}

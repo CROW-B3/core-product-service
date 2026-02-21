@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "CROW Product Service",
+  "type": "collection",
+  "ignore": ["node_modules", ".env"]
+}

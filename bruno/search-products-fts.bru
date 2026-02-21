@@ -1,0 +1,19 @@
+meta {
+  name: Search Products (Full Text Search)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/search?q=shirt&organizationId={{orgId}}&mode=fts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+headers {
+  Content-Type: application/json
+}

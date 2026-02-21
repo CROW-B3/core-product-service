@@ -1,0 +1,30 @@
+meta {
+  name: Crawl Products
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/products/crawl
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "url": "https://example-store.com/products",
+    "organizationId": "{{orgId}}",
+    "options": {
+      "maxDepth": 2,
+      "includeImages": true
+    }
+  }
+}
