@@ -1,20 +1,20 @@
-import { tryCatch } from '@d3avarja/try-catch';
 import type { Context } from 'hono';
-import type pino from 'pino';
+import type { Logger as PinoLogger } from 'pino';
+import { tryCatch } from '@d3avarja/try-catch';
 
-export type ServiceError = {
+export interface ServiceError {
   statusCode: number;
   code: string;
   message: string;
-};
+}
 
-export type ErrorResponse = {
+export interface ErrorResponse {
   error: {
     code: string;
     message: string;
     timestamp: string;
   };
-};
+}
 
 const createErrorResponse = (code: string, message: string): ErrorResponse => ({
   error: {
@@ -45,17 +45,21 @@ const getErrorCodeFromError = (error: unknown): string => {
 const getErrorMessageFromError = (error: unknown): string => {
   if (typeof error === 'object' && error !== null && 'message' in error) {
     const message = (error as ServiceError).message;
-    return typeof message === 'string' ? message : 'An unexpected error occurred';
+    return typeof message === 'string'
+      ? message
+      : 'An unexpected error occurred';
   }
 
   if (typeof error === 'string') return error;
 
   return 'An unexpected error occurred';
-}
+};
 
-;
-
-const logErrorToConsole = (logger: pino.Logger, error: unknown, context?: string): void => {
+const logErrorToConsole = (
+  logger: PinoLogger,
+  error: unknown,
+  context?: string
+): void => {
   const errorMessage = getErrorMessageFromError(error);
   const errorCode = getErrorCodeFromError(error);
 
@@ -66,17 +70,28 @@ const logErrorToConsole = (logger: pino.Logger, error: unknown, context?: string
   }
 };
 
-export const handleErrorResponse = (c: Context, error: unknown, logger: pino.Logger) => {
+export const handleErrorResponse = (
+  c: Context,
+  error: unknown,
+  logger: PinoLogger
+) => {
   const statusCode = getStatusCodeFromError(error);
   const code = getErrorCodeFromError(error);
   const message = getErrorMessageFromError(error);
 
   logErrorToConsole(logger, error);
 
-  return c.json(createErrorResponse(code, message), statusCode);
+  return c.json(
+    createErrorResponse(code, message),
+    statusCode as import('hono/utils/http-status').ContentfulStatusCode
+  );
 };
 
-export const createServiceError = (statusCode: number, code: string, message: string): ServiceError => ({
+export const createServiceError = (
+  statusCode: number,
+  code: string,
+  message: string
+): ServiceError => ({
   statusCode,
   code,
   message,
@@ -84,6 +99,6 @@ export const createServiceError = (statusCode: number, code: string, message: st
 
 export const wrapAsyncHandler = <T>(
   handler: () => Promise<T>
-): Promise<[T, null] | [null, Error]> => {
-  return tryCatch(handler);
+): ReturnType<typeof tryCatch<T>> => {
+  return tryCatch(handler());
 };

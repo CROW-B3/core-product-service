@@ -62,6 +62,8 @@ const formatCrawlerJobResponse = (
   job: typeof schema.crawlerJob.$inferSelect
 ) => ({
   ...job,
+  sourceType: job.sourceType as 'url' | 'csv' | 'json',
+  status: job.status as 'pending' | 'in_progress' | 'completed' | 'failed',
   startedAt: job.startedAt?.toISOString() ?? null,
   completedAt: job.completedAt?.toISOString() ?? null,
   createdAt: job.createdAt.toISOString(),
