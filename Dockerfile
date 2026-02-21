@@ -1,19 +1,12 @@
-# Build stage
 FROM oven/bun:1 AS builder
-
 WORKDIR /app
-
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
-
 COPY . ./
+RUN bunx wrangler deploy --dry-run --outdir .wrangler/dist --env local
 
-RUN bun build src/index.ts --compile --outfile server
-
-FROM debian:bookworm-slim
-
-WORKDIR /app
-
-COPY --from=builder /app/server ./server
-
-CMD ["./server"]
+FROM jacoblincool/workerd
+WORKDIR /worker
+COPY --from=builder /app/.wrangler/dist/index.js ./index.js
+COPY worker.capnp ./worker.capnp
+EXPOSE 8080
