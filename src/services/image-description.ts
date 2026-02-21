@@ -20,7 +20,17 @@ const fetchImageAsBytes = async (
     const response = await fetch(imageUrl);
     if (!response.ok) return null;
 
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) {
+      console.error(
+        `[Vision] Non-image content-type "${contentType}" for: ${imageUrl}`
+      );
+      return null;
+    }
+
     const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) return null;
+
     return [...new Uint8Array(arrayBuffer)];
   } catch (error) {
     console.error(`[Vision] Failed to fetch image: ${imageUrl}`, error);
@@ -152,4 +162,86 @@ export const generateDescriptionsForProduct = async (
     `[Vision] Processing ${product.images.length} images for product ${product.id}`
   );
   return generateAndStoreDescriptions(env, product.id, product.images);
+};
+
+const VISUAL_MODEL = '@cf/llava-hf/llava-1.5-7b-hf';
+const VISUAL_MODEL_TAG = '@cf/llava-hf/llava-1.5-7b-hf:visual';
+
+export const generateVisualDescription = async (
+  env: Environment,
+  imageUrl: string
+): Promise<ImageDescription | null> => {
+  const imageBytes = await fetchImageAsBytes(imageUrl);
+  if (!imageBytes) return null;
+
+  try {
+    const response = (await env.AI.run(VISUAL_MODEL, {
+      image: imageBytes,
+      prompt:
+        'Describe this product image in detail. Include: colors, materials visible, style, shape, any text or branding visible, and overall aesthetic. Be specific and detailed for a retail catalog.',
+      max_tokens: 512,
+    })) as { description: string };
+
+    return {
+      imageUrl,
+      description: response.description,
+      features: [],
+      colors: [],
+      materials: [],
+      style: '',
+    };
+  } catch (error) {
+    console.error(
+      `[Vision] Failed to generate visual description for: ${imageUrl}`,
+      error
+    );
+    return null;
+  }
+};
+
+export const generateAndStoreVisualDescriptions = async (
+  env: Environment,
+  productId: string,
+  imageUrls: string[]
+): Promise<ImageDescription[]> => {
+  const database = drizzle(env.DB, { schema });
+  const descriptions: ImageDescription[] = [];
+
+  for (const imageUrl of imageUrls) {
+    const result = await generateVisualDescription(env, imageUrl);
+    if (!result) continue;
+
+    const id = crypto.randomUUID();
+    const now = new Date();
+
+    await database.insert(schema.productAiDescription).values({
+      id,
+      productId,
+      imageUrl: result.imageUrl,
+      description: result.description,
+      features: JSON.stringify(result.features),
+      colors: JSON.stringify(result.colors),
+      materials: JSON.stringify(result.materials),
+      style: result.style,
+      modelUsed: VISUAL_MODEL_TAG,
+      createdAt: now,
+    });
+
+    descriptions.push(result);
+    console.warn(
+      `[Vision] Generated visual description for image: ${imageUrl.slice(0, 50)}...`
+    );
+  }
+
+  return descriptions;
+};
+
+export const generateVisualDescriptionsForProduct = async (
+  env: Environment,
+  product: { id: string; images: string[] }
+): Promise<ImageDescription[]> => {
+  console.warn(
+    `[Vision] Processing visual analysis for ${product.images.length} images of product ${product.id}`
+  );
+  return generateAndStoreVisualDescriptions(env, product.id, product.images);
 };

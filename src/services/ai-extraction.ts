@@ -148,9 +148,9 @@ export const extractProductsFromHtmlChunk = async (
 
     const result = await withRetry(async () => {
       return generateObject({
-        model: workersai(env.AI_MODEL),
+        model: workersai(env.AI_MODEL as Parameters<typeof workersai>[0]),
         schema: ExtractionSchema,
-        maxTokens: 4096,
+        maxOutputTokens: 4096,
         prompt: `Extract products from HTML. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
 
 HTML:
@@ -257,9 +257,9 @@ const extractProductsFromTextChunk = async (
 
     const result = await withRetry(async () => {
       return generateObject({
-        model: workersai(env.AI_MODEL),
+        model: workersai(env.AI_MODEL as Parameters<typeof workersai>[0]),
         schema: ExtractionSchema,
-        maxTokens: 4096,
+        maxOutputTokens: 4096,
         prompt: `Extract products from the following text content from a website. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
 
 Page URL: ${chunk.url}

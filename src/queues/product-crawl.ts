@@ -12,7 +12,10 @@ import {
   extractProductsFromCsv,
   extractProductsFromJson,
 } from '../services/extraction';
-import { generateDescriptionsForProduct } from '../services/image-description';
+import {
+  generateDescriptionsForProduct,
+  generateVisualDescriptionsForProduct,
+} from '../services/image-description';
 
 const markJobAsInProgress = async (
   database: ReturnType<typeof drizzle>,
@@ -281,6 +284,34 @@ const generateImageDescriptionsForProducts = async (
   console.warn(`[QUEUE] AI description generation complete`);
 };
 
+const generateVisualDescriptionsForProducts = async (
+  environment: Environment,
+  savedProducts: SavedProduct[]
+) => {
+  const productsWithImages = savedProducts.filter(p => p.images.length > 0);
+  if (productsWithImages.length === 0) return;
+
+  console.warn(
+    `[QUEUE] Generating visual AI descriptions for ${productsWithImages.length} products (best-effort)`
+  );
+
+  for (const product of productsWithImages) {
+    try {
+      await generateVisualDescriptionsForProduct(environment, {
+        id: product.id,
+        images: product.images.slice(0, 3),
+      });
+    } catch (visualError) {
+      console.error(
+        `[QUEUE] Failed to generate visual descriptions for product ${product.id}:`,
+        visualError
+      );
+    }
+  }
+
+  console.warn(`[QUEUE] Visual AI description generation complete`);
+};
+
 export const processProductCrawlJob = async (
   environment: Environment,
   message: CrawlJobMessage
@@ -323,6 +354,41 @@ export const processProductCrawlJob = async (
     }
 
     await generateImageDescriptionsForProducts(environment, savedProducts);
+
+    // Generate detailed visual descriptions using vision model
+    try {
+      await generateVisualDescriptionsForProducts(environment, savedProducts);
+    } catch (visualError) {
+      console.error(
+        '[QUEUE] Failed to generate visual descriptions:',
+        visualError
+      );
+    }
+
+    // Embed products for semantic search
+    try {
+      const { embedProduct: embedProductFn } =
+        await import('../services/vectorize');
+      for (const savedProduct of savedProducts) {
+        const product = await database
+          .select()
+          .from(schema.product)
+          .where(eq(schema.product.id, savedProduct.id))
+          .limit(1);
+        if (!product[0]) continue;
+        const descriptions = await database
+          .select()
+          .from(schema.productAiDescription)
+          .where(eq(schema.productAiDescription.productId, savedProduct.id));
+        await embedProductFn(
+          environment,
+          product[0],
+          descriptions.map(d => ({ description: d.description }))
+        );
+      }
+    } catch (embedError) {
+      console.error('[QUEUE] Failed to embed products:', embedError);
+    }
   } catch (error) {
     console.error(`[QUEUE] Job ${jobId} failed:`, error);
     await markJobAsFailed(database, jobId, extractErrorMessage(error));
