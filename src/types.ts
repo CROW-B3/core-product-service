@@ -7,6 +7,7 @@ export interface Environment {
   AI: Ai;
   BROWSER: BrowserWorker;
   PRODUCT_CRAWL_QUEUE: Queue;
+  VECTORIZE: VectorizeIndex;
   ENVIRONMENT: 'local' | 'dev' | 'prod';
   AI_GATEWAY_ID: string;
   AI_MODEL: string;

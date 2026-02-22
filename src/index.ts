@@ -1,6 +1,6 @@
 import type { CrawlJobMessage, Environment } from './types';
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { eq } from 'drizzle-orm';
+import { count, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
@@ -18,15 +18,18 @@ import {
   GetCrawlerJobRoute,
   GetCrawlerJobsByOrgRoute,
   GetProductAiDescriptionsRoute,
+  GetProductImageRoute,
   GetProductRoute,
   GetProductsByOrgRoute,
   HelloWorldRoute,
+  SearchProductsRoute,
   TriggerCrawlerJobRoute,
 } from './routes';
 import { HealthCheckRoute, ReadinessCheckRoute } from './routes/health';
 import { extractProductsFromPage } from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
 import { generateImageDescription } from './services/image-description';
+import { ftsSearch, semanticSearch } from './services/vectorize';
 import { handleErrorResponse } from './utils/error-handler';
 
 async function checkDatabaseHealth(
@@ -198,6 +201,16 @@ app.openapi(ReadinessCheckRoute, async c => {
   );
 });
 
+app.openapi(GetProductImageRoute, async c => {
+  const { key } = c.req.valid('param');
+  const object = await c.env.R2_BUCKET.get(decodeURIComponent(key));
+  if (!object) return c.notFound();
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Cache-Control', 'public, max-age=31536000');
+  return new Response(object.body, { headers });
+});
+
 app.openapi(HelloWorldRoute, context => {
   return context.json({ text: 'Hello from Product Service!' });
 });
@@ -258,6 +271,108 @@ app.openapi(GetCrawlerJobsByOrgRoute, async context => {
 
   const jobs = await fetchCrawlerJobsByOrganization(database, organizationId);
   return context.json({ jobs: jobs.map(formatCrawlerJobResponse) });
+});
+
+app.openapi(SearchProductsRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const { q, organizationId, limit, mode } = context.req.valid('query');
+  const maxResults = Math.min(Number.parseInt(limit ?? '10', 10) || 10, 50);
+  const searchMode = mode ?? 'semantic';
+
+  try {
+    if (searchMode === 'fts') {
+      const rows = await ftsSearch(context.env, organizationId, q, maxResults);
+      return context.json({ results: rows, total: rows.length, query: q });
+    }
+
+    if (searchMode === 'semantic') {
+      const matches = await semanticSearch(
+        context.env,
+        organizationId,
+        q,
+        maxResults
+      );
+      if (matches.length === 0) {
+        return context.json({ results: [], total: 0, query: q });
+      }
+      const ids = matches.map(m => m.id);
+      const products = await database
+        .select()
+        .from(schema.product)
+        .where(inArray(schema.product.id, ids));
+      const scoreMap = new Map(matches.map(m => [m.id, m.score]));
+      const sorted = products
+        .map(p => {
+          try {
+            return {
+              ...formatProductResponse(p),
+              _score: scoreMap.get(p.id) ?? 0,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter((p): p is NonNullable<typeof p> => p !== null)
+        .sort((a, b) => b._score - a._score);
+      return context.json({ results: sorted, total: sorted.length, query: q });
+    }
+
+    const [semanticMatches, ftsRows] = await Promise.allSettled([
+      semanticSearch(context.env, organizationId, q, maxResults),
+      ftsSearch(context.env, organizationId, q, maxResults),
+    ]);
+
+    const semanticIds =
+      semanticMatches.status === 'fulfilled'
+        ? semanticMatches.value.map(m => m.id)
+        : [];
+    const scoreMap =
+      semanticMatches.status === 'fulfilled'
+        ? new Map(semanticMatches.value.map(m => [m.id, m.score]))
+        : new Map<string, number>();
+
+    const ftsResults =
+      ftsRows.status === 'fulfilled'
+        ? (ftsRows.value as Record<string, unknown>[])
+        : [];
+    const ftsIds = ftsResults.map(r => r.id as string).filter(Boolean);
+
+    const allIds = [...new Set([...semanticIds, ...ftsIds])].slice(
+      0,
+      maxResults
+    );
+
+    if (allIds.length === 0) {
+      return context.json({ results: [], total: 0, query: q });
+    }
+
+    const products = await database
+      .select()
+      .from(schema.product)
+      .where(inArray(schema.product.id, allIds));
+
+    const formatted = products
+      .map(p => {
+        try {
+          return {
+            ...formatProductResponse(p),
+            _score: scoreMap.get(p.id) ?? 0,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .sort((a, b) => b._score - a._score);
+
+    return context.json({
+      results: formatted,
+      total: formatted.length,
+      query: q,
+    });
+  } catch {
+    return context.json({ results: [], total: 0, query: q });
+  }
 });
 
 app.openapi(GetProductRoute, async context => {
@@ -324,14 +439,23 @@ app.openapi(TriggerCrawlerJobRoute, async context => {
     );
   }
 
-  await processProductCrawlJob(context.env, {
-    jobId: id,
-    organizationId: job.organizationId,
-    url: job.sourceValue,
-  });
+  context.executionCtx.waitUntil(
+    processProductCrawlJob(context.env, {
+      jobId: id,
+      organizationId: job.organizationId,
+      url: job.sourceValue,
+    }).catch(error => {
+      console.error('[TRIGGER] Background crawl failed for job', id, error);
+    })
+  );
 
-  const updatedJob = await fetchCrawlerJobById(database, id);
-  return context.json(formatCrawlerJobResponse(updatedJob!));
+  return context.json(
+    {
+      job: formatCrawlerJobResponse(job),
+      message: 'Crawler job accepted and running in background',
+    },
+    202
+  );
 });
 
 app.openapi(DebugExtractRoute, async context => {
@@ -496,6 +620,20 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
     .where(eq(schema.crawlerJob.id, id));
 
   if (!body.error) {
+    const actualCountResult = await database
+      .select({ count: count() })
+      .from(schema.product)
+      .where(eq(schema.product.crawlerJobId, id));
+    const actualCount = actualCountResult[0]?.count ?? body.productsFound ?? 0;
+
+    await database
+      .update(schema.crawlerJob)
+      .set({
+        productsFound: actualCount,
+        productsProcessed: actualCount,
+      })
+      .where(eq(schema.crawlerJob.id, id));
+
     const job = await fetchCrawlerJobById(database, id);
     if (job) {
       await context.env.PRODUCT_CRAWL_QUEUE.send({

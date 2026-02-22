@@ -114,9 +114,16 @@ export const TriggerCrawlerJobRoute = createRoute({
     params: z.object({ id: z.string() }),
   },
   responses: {
-    200: {
-      content: { 'application/json': { schema: CrawlerJobSchema } },
-      description: 'Crawler job triggered',
+    202: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            job: CrawlerJobSchema,
+            message: z.string(),
+          }),
+        },
+      },
+      description: 'Crawler job accepted and running in background',
     },
     404: {
       description: 'Crawler job not found',
@@ -221,6 +228,49 @@ export const DebugImageDescriptionRoute = createRoute({
         },
       },
       description: 'Debug image description result',
+    },
+  },
+});
+
+export const SearchProductsRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/products/search',
+  request: {
+    query: z.object({
+      q: z.string().min(1),
+      organizationId: z.string(),
+      limit: z.string().optional(),
+      mode: z.enum(['semantic', 'fts', 'hybrid']).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            results: z.array(z.unknown()),
+            total: z.number(),
+            query: z.string(),
+          }),
+        },
+      },
+      description: 'Search results',
+    },
+  },
+});
+
+export const GetProductImageRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/products/images/{key}',
+  request: {
+    params: z.object({ key: z.string() }),
+  },
+  responses: {
+    200: {
+      description: 'Product image',
+    },
+    404: {
+      description: 'Image not found',
     },
   },
 });

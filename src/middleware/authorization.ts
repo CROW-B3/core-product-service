@@ -21,7 +21,9 @@ export const requireOrganization = () => {
   return async (c: Context, next: Next) => {
     const jwtPayload = c.get('jwtPayload');
     const organizationId =
-      c.req.param('organizationId') || c.req.query('organizationId');
+      c.req.header('X-Organization-Id') ||
+      c.req.param('organizationId') ||
+      c.req.query('organizationId');
 
     if (c.get('isSystem')) return next();
 

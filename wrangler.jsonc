@@ -32,6 +32,7 @@
       "bucket_name": "crow-core-product-service-store",
     },
   ],
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "crow-products" }],
   "queues": {
     "producers": [
       {
@@ -66,6 +67,7 @@
       "browser": {
         "binding": "BROWSER",
       },
+      "vectorize": [{ "binding": "VECTORIZE", "index_name": "crow-products-dev" }],
       "routes": [
         {
           "pattern": "dev.internal.products.crowai.dev",

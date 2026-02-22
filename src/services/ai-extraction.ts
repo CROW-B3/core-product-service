@@ -166,7 +166,12 @@ ${htmlChunk}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.images.filter(img => img && img.length > 0),
+      images: p.images.filter(
+        img =>
+          img &&
+          img.length > 0 &&
+          /\.(?:jpg|jpeg|png|webp|gif|avif)(?:\?|$)/i.test(img)
+      ),
       price: p.price,
       currency: p.currency,
       category: null,
@@ -278,7 +283,12 @@ ${chunk.text}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.images.filter(img => img && img.length > 0),
+      images: p.images.filter(
+        img =>
+          img &&
+          img.length > 0 &&
+          /\.(?:jpg|jpeg|png|webp|gif|avif)(?:\?|$)/i.test(img)
+      ),
       price: p.price,
       currency: p.currency,
       category: null,

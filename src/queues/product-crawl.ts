@@ -16,6 +16,7 @@ import {
   generateDescriptionsForProduct,
   generateVisualDescriptionsForProduct,
 } from '../services/image-description';
+import { uploadProductImagesToR2 } from '../services/image-r2';
 
 const markJobAsInProgress = async (
   database: ReturnType<typeof drizzle>,
@@ -86,6 +87,7 @@ interface SavedProduct {
 
 const saveProductsToDatabase = async (
   database: ReturnType<typeof drizzle>,
+  environment: Environment,
   organizationId: string,
   jobId: string,
   products: ExtractedProduct[]
@@ -95,13 +97,18 @@ const saveProductsToDatabase = async (
 
   for (const product of products) {
     const productId = crypto.randomUUID();
+    const r2Images = await uploadProductImagesToR2(
+      environment,
+      productId,
+      product.images ?? []
+    );
     await database.insert(schema.product).values({
       id: productId,
       organizationId,
       externalId: product.id,
       title: product.title,
       description: product.description,
-      images: JSON.stringify(product.images),
+      images: JSON.stringify(r2Images),
       price: product.price ? Math.round(product.price * 100) : null,
       category: product.category ?? null,
       metadata: JSON.stringify({
@@ -115,7 +122,7 @@ const saveProductsToDatabase = async (
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    savedProducts.push({ id: productId, images: product.images });
+    savedProducts.push({ id: productId, images: r2Images });
   }
 
   return savedProducts;
@@ -336,6 +343,7 @@ export const processProductCrawlJob = async (
 
     const savedProducts = await saveProductsToDatabase(
       database,
+      environment,
       organizationId,
       jobId,
       extractedProducts
