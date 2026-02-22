@@ -1,3 +1,4 @@
+// @ts-expect-error - node:process types not available in Workers environment
 import process from 'node:process';
 import { drizzleD1Config } from '@deox/drizzle-d1-utils';
 
