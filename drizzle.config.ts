@@ -12,5 +12,5 @@ export default drizzleD1Config(
     databaseId: process.env.CLOUDFLARE_D1_DATABASE_ID,
     binding: 'DB',
     remote: process.env.REMOTE === 'true' || process.env.REMOTE === '1',
-  }
+  } as any
 );
