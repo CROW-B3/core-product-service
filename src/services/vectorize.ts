@@ -18,12 +18,14 @@ export const embedProduct = async (
     organizationId: string;
     title: string;
     description: string;
+    productDetailedDescription?: string | null;
   },
   aiDescriptions: { description: string }[] = []
 ): Promise<void> => {
   const combinedText = [
     product.title,
     product.description,
+    product.productDetailedDescription,
     ...aiDescriptions.map(d => d.description),
   ]
     .filter(Boolean)
@@ -56,15 +58,30 @@ export const semanticSearch = async (
   return results.matches.map(m => ({ id: m.id, score: m.score }));
 };
 
+const MAX_FTS_QUERY_LENGTH = 256;
+
+/**
+ * Sanitize a FTS5 query so that FTS5 special operators (AND, OR, NOT, NEAR, quotes,
+ * carets, asterisks) cannot be injected. We wrap the user input in double-quotes
+ * which forces FTS5 to treat the entire string as a phrase match and strip any
+ * embedded double-quotes via doubling.
+ */
+const sanitizeFtsQuery = (raw: string): string => {
+  const truncated = raw.slice(0, MAX_FTS_QUERY_LENGTH);
+  // Escape embedded double-quotes by doubling them, then wrap in double-quotes
+  return `"${truncated.replace(/"/g, '""')}"`;
+};
+
 export const ftsSearch = async (
   env: Environment,
   orgId: string,
   query: string,
   limit: number = 20
 ): Promise<unknown[]> => {
+  const safeQuery = sanitizeFtsQuery(query);
   const stmt = env.DB.prepare(
     `SELECT p.* FROM product_fts fts JOIN product p ON p.id = fts.product_id WHERE fts MATCH ? AND p.organizationId = ? ORDER BY rank LIMIT ?`
-  ).bind(query, orgId, limit);
+  ).bind(safeQuery, orgId, limit);
   const result = await stmt.all();
   return result.results ?? [];
 };

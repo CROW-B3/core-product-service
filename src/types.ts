@@ -62,15 +62,35 @@ export const CrawlerJobSchema = z
 
 export const CreateCrawlerJobSchema = z
   .object({
-    organizationId: z.string().optional(),
+    organizationId: z.string().uuid(),
     onboardingId: z.string().optional(),
     sourceType: z.enum(['url', 'csv', 'json']),
-    sourceValue: z.string(),
+    sourceValue: z.string().max(2048),
   })
   .refine(
     data => {
       if (data.sourceType !== 'url') return true;
-      return URL.canParse(data.sourceValue);
+      if (!URL.canParse(data.sourceValue)) return false;
+      const u = new URL(data.sourceValue);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      // Block private/loopback/link-local hosts (SSRF protection)
+      const host = u.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1')
+        return false;
+      if (/^10\./.test(host)) return false;
+      if (/^192\.168\./.test(host)) return false;
+      if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return false;
+      if (/^169\.254\./.test(host)) return false;
+      // Block internal CROW service hostnames (SSRF via internal subdomain bypass)
+      if (host.endsWith('.crowai.dev')) return false;
+      if (/\.internal\./i.test(host)) return false;
+      if (
+        host.endsWith('.internal') ||
+        host.endsWith('.local') ||
+        host.endsWith('.localhost')
+      )
+        return false;
+      return true;
     },
     {
       message: 'Invalid URL format. Please provide a valid HTTP/HTTPS URL.',

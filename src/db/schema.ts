@@ -27,6 +27,8 @@ export const product = sqliteTable('product', {
   price: integer('price'),
   category: text('category'),
   metadata: text('metadata'),
+  webPageReferences: text('webPageReferences'),
+  productDetailedDescription: text('productDetailedDescription'),
   crawlerJobId: text('crawlerJobId').references(() => crawlerJob.id, {
     onDelete: 'set null',
   }),

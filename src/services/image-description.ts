@@ -2,7 +2,7 @@ import type { Environment } from '../types';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
 
-const VISION_MODEL = '@cf/llava-hf/llava-1.5-7b-hf';
+const VISION_MODEL = '@cf/unum/uform-gen2-qwen-500m';
 
 export interface ImageDescription {
   imageUrl: string;
@@ -97,7 +97,6 @@ export const generateImageDescription = async (
     const response = (await env.AI.run(VISION_MODEL, {
       image: imageBytes,
       prompt: `Describe this product for an e-commerce store. Include the item type, colors, style, and any visible features. Be detailed and helpful for online shoppers.`,
-      max_tokens: 256,
     })) as { description: string };
 
     return {
@@ -164,84 +163,11 @@ export const generateDescriptionsForProduct = async (
   return generateAndStoreDescriptions(env, product.id, product.images);
 };
 
-const VISUAL_MODEL = '@cf/llava-hf/llava-1.5-7b-hf';
-const VISUAL_MODEL_TAG = '@cf/llava-hf/llava-1.5-7b-hf:visual';
+// Visual description functions delegate to the standard description pipeline
+// (same model — separate pass would be redundant).
+export const generateVisualDescription = generateImageDescription;
 
-export const generateVisualDescription = async (
-  env: Environment,
-  imageUrl: string
-): Promise<ImageDescription | null> => {
-  const imageBytes = await fetchImageAsBytes(imageUrl);
-  if (!imageBytes) return null;
+export const generateAndStoreVisualDescriptions = generateAndStoreDescriptions;
 
-  try {
-    const response = (await env.AI.run(VISUAL_MODEL, {
-      image: imageBytes,
-      prompt:
-        'Describe this product image in detail. Include: colors, materials visible, style, shape, any text or branding visible, and overall aesthetic. Be specific and detailed for a retail catalog.',
-      max_tokens: 512,
-    })) as { description: string };
-
-    return {
-      imageUrl,
-      description: response.description,
-      features: [],
-      colors: [],
-      materials: [],
-      style: '',
-    };
-  } catch (error) {
-    console.error(
-      `[Vision] Failed to generate visual description for: ${imageUrl}`,
-      error
-    );
-    return null;
-  }
-};
-
-export const generateAndStoreVisualDescriptions = async (
-  env: Environment,
-  productId: string,
-  imageUrls: string[]
-): Promise<ImageDescription[]> => {
-  const database = drizzle(env.DB, { schema });
-  const descriptions: ImageDescription[] = [];
-
-  for (const imageUrl of imageUrls) {
-    const result = await generateVisualDescription(env, imageUrl);
-    if (!result) continue;
-
-    const id = crypto.randomUUID();
-    const now = new Date();
-
-    await database.insert(schema.productAiDescription).values({
-      id,
-      productId,
-      imageUrl: result.imageUrl,
-      description: result.description,
-      features: JSON.stringify(result.features),
-      colors: JSON.stringify(result.colors),
-      materials: JSON.stringify(result.materials),
-      style: result.style,
-      modelUsed: VISUAL_MODEL_TAG,
-      createdAt: now,
-    });
-
-    descriptions.push(result);
-    console.warn(
-      `[Vision] Generated visual description for image: ${imageUrl.slice(0, 50)}...`
-    );
-  }
-
-  return descriptions;
-};
-
-export const generateVisualDescriptionsForProduct = async (
-  env: Environment,
-  product: { id: string; images: string[] }
-): Promise<ImageDescription[]> => {
-  console.warn(
-    `[Vision] Processing visual analysis for ${product.images.length} images of product ${product.id}`
-  );
-  return generateAndStoreVisualDescriptions(env, product.id, product.images);
-};
+export const generateVisualDescriptionsForProduct =
+  generateDescriptionsForProduct;

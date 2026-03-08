@@ -8,8 +8,8 @@ export const requireOwnership = (resourceIdParam: string = 'id') => {
     // System JWTs bypass ownership checks
     if (c.get('isSystem')) return next();
 
-    // Verify user owns the resource
-    if (jwtPayload?.sub !== resourceId && !jwtPayload?.organizationId) {
+    // Verify user owns the resource — the JWT subject must match the resource ID
+    if (jwtPayload?.sub !== resourceId) {
       return c.json({ error: 'Forbidden', message: 'Access denied' }, 403);
     }
 

@@ -58,7 +58,7 @@ export const GetCrawlerJobsByOrgRoute = createRoute({
   method: 'get',
   path: '/api/v1/crawler-jobs/organization/{organizationId}',
   request: {
-    params: z.object({ organizationId: z.string() }),
+    params: z.object({ organizationId: z.string().uuid() }),
   },
   responses: {
     200: {
@@ -93,7 +93,7 @@ export const GetProductsByOrgRoute = createRoute({
   method: 'get',
   path: '/api/v1/products/organization/{organizationId}',
   request: {
-    params: z.object({ organizationId: z.string() }),
+    params: z.object({ organizationId: z.string().uuid() }),
     query: z.object({
       page: z.string().optional(),
       pageSize: z.string().optional(),
@@ -238,7 +238,7 @@ export const SearchProductsRoute = createRoute({
   request: {
     query: z.object({
       q: z.string().min(1),
-      organizationId: z.string(),
+      organizationId: z.string().uuid(),
       limit: z.string().optional(),
       mode: z.enum(['semantic', 'fts', 'hybrid']).optional(),
     }),
@@ -255,6 +255,43 @@ export const SearchProductsRoute = createRoute({
         },
       },
       description: 'Search results',
+    },
+  },
+});
+
+export const BulkImageUploadRoute = createRoute({
+  method: 'post',
+  path: '/api/v1/products/bulk-image-upload',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            organizationId: z.string(),
+            imageUrls: z.array(z.string().url()).min(1).max(50),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            processed: z.number(),
+            failed: z.number(),
+            results: z.array(
+              z.object({
+                imageUrl: z.string(),
+                description: z.string(),
+                success: z.boolean(),
+              })
+            ),
+          }),
+        },
+      },
+      description: 'Bulk image AI description generation results',
     },
   },
 });

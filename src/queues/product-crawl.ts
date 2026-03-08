@@ -102,6 +102,7 @@ const saveProductsToDatabase = async (
       productId,
       product.images ?? []
     );
+    const sourceUrls = product.url ? [product.url] : [];
     await database.insert(schema.product).values({
       id: productId,
       organizationId,
@@ -118,10 +119,21 @@ const saveProductsToDatabase = async (
         inStock: product.inStock,
         sourceUrl: product.url,
       }),
+      webPageReferences: JSON.stringify(sourceUrls),
       crawlerJobId: jobId,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    await environment.DB.prepare(
+      'INSERT INTO product_fts(product_id, title, description, category) VALUES (?, ?, ?, ?)'
+    )
+      .bind(
+        productId,
+        product.title,
+        product.description ?? '',
+        product.category ?? ''
+      )
+      .run();
     savedProducts.push({ id: productId, images: r2Images });
   }
 
@@ -291,6 +303,74 @@ const generateImageDescriptionsForProducts = async (
   console.warn(`[QUEUE] AI description generation complete`);
 };
 
+const synthesizeDetailedDescriptionFromImageDescriptions = async (
+  environment: Environment,
+  productTitle: string,
+  imageDescriptions: string[]
+): Promise<string | null> => {
+  if (imageDescriptions.length === 0) return null;
+
+  const combinedDescriptions = imageDescriptions.join('\n- ');
+  const prompt = `Given the product titled "${productTitle}" with these visual descriptions:\n- ${combinedDescriptions}\n\nWrite a single coherent detailed product description that synthesizes all visual information. Focus on materials, colors, style, and key features. Keep it under 300 words.`;
+
+  try {
+    const result = (await environment.AI.run(
+      '@cf/meta/llama-3.1-8b-instruct' as Parameters<
+        typeof environment.AI.run
+      >[0],
+      { prompt, max_tokens: 512 }
+    )) as { response: string };
+    return result.response?.trim() ?? null;
+  } catch (error) {
+    console.error('[QUEUE] Failed to synthesize detailed description:', error);
+    return null;
+  }
+};
+
+const generateDetailedDescriptionsForProducts = async (
+  database: ReturnType<typeof drizzle>,
+  environment: Environment,
+  savedProducts: SavedProduct[]
+) => {
+  for (const savedProduct of savedProducts) {
+    try {
+      const productRecord = await database
+        .select()
+        .from(schema.product)
+        .where(eq(schema.product.id, savedProduct.id))
+        .limit(1);
+      if (!productRecord[0]) continue;
+
+      const descriptions = await database
+        .select({ description: schema.productAiDescription.description })
+        .from(schema.productAiDescription)
+        .where(eq(schema.productAiDescription.productId, savedProduct.id));
+
+      const detailedDescription =
+        await synthesizeDetailedDescriptionFromImageDescriptions(
+          environment,
+          productRecord[0].title,
+          descriptions.map(d => d.description)
+        );
+
+      if (!detailedDescription) continue;
+
+      await database
+        .update(schema.product)
+        .set({
+          productDetailedDescription: detailedDescription,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.product.id, savedProduct.id));
+    } catch (error) {
+      console.error(
+        `[QUEUE] Failed to generate detailed description for ${savedProduct.id}:`,
+        error
+      );
+    }
+  }
+};
+
 const generateVisualDescriptionsForProducts = async (
   environment: Environment,
   savedProducts: SavedProduct[]
@@ -363,7 +443,6 @@ export const processProductCrawlJob = async (
 
     await generateImageDescriptionsForProducts(environment, savedProducts);
 
-    // Generate detailed visual descriptions using vision model
     try {
       await generateVisualDescriptionsForProducts(environment, savedProducts);
     } catch (visualError) {
@@ -373,7 +452,19 @@ export const processProductCrawlJob = async (
       );
     }
 
-    // Embed products for semantic search
+    try {
+      await generateDetailedDescriptionsForProducts(
+        database,
+        environment,
+        savedProducts
+      );
+    } catch (detailedError) {
+      console.error(
+        '[QUEUE] Failed to generate detailed descriptions:',
+        detailedError
+      );
+    }
+
     try {
       const { embedProduct: embedProductFn } =
         await import('../services/vectorize');

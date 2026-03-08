@@ -55,12 +55,18 @@ const extractLinksFromPage = async (
     ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>['newPage']>
   >
 ): Promise<string[]> => {
-  return page.evaluate(() => {
-    const anchors = Array.from(document.querySelectorAll('a[href]'));
-    return anchors
-      .map(a => (a as HTMLAnchorElement).href)
-      .filter(href => href.startsWith('http'));
-  });
+  return page.evaluate((() => {
+    const anchors = Array.from(
+      (
+        globalThis as unknown as {
+          document: {
+            querySelectorAll: (s: string) => ArrayLike<{ href: string }>;
+          };
+        }
+      ).document.querySelectorAll('a[href]')
+    );
+    return anchors.map(a => a.href).filter(href => href.startsWith('http'));
+  }) as () => string[]);
 };
 
 const filterProductUrls = (links: string[], baseUrl: string): string[] => {
@@ -123,14 +129,22 @@ const crawlWithPuppeteer = async (
 
     await waitForPageLoad(page);
 
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight / 2);
-    });
+    await page.evaluate((() => {
+      const w = globalThis as unknown as {
+        scrollTo: (x: number, y: number) => void;
+        document: { body: { scrollHeight: number } };
+      };
+      w.scrollTo(0, w.document.body.scrollHeight / 2);
+    }) as () => void);
     await new Promise(r => setTimeout(r, 1000));
 
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
-    });
+    await page.evaluate((() => {
+      const w = globalThis as unknown as {
+        scrollTo: (x: number, y: number) => void;
+        document: { body: { scrollHeight: number } };
+      };
+      w.scrollTo(0, w.document.body.scrollHeight);
+    }) as () => void);
     await new Promise(r => setTimeout(r, 1000));
 
     const html = await page.content();

@@ -7,9 +7,11 @@ import { poweredBy } from 'hono/powered-by';
 import { createLogger } from './config/logger';
 import { validateEnv } from './config/validate-env';
 import * as schema from './db/schema';
+import { createJWTMiddleware } from './middleware/jwt';
 import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
+  BulkImageUploadRoute,
   CompleteCrawlerJobRoute,
   CrawlNowRoute,
   CreateCrawlerJobRoute,
@@ -28,8 +30,11 @@ import {
 import { HealthCheckRoute, ReadinessCheckRoute } from './routes/health';
 import { extractProductsFromPage } from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
-import { generateImageDescription } from './services/image-description';
-import { ftsSearch, semanticSearch } from './services/vectorize';
+import {
+  generateAndStoreDescriptions,
+  generateImageDescription,
+} from './services/image-description';
+import { embedProduct, ftsSearch, semanticSearch } from './services/vectorize';
 import { handleErrorResponse } from './utils/error-handler';
 
 async function checkDatabaseHealth(
@@ -43,10 +48,53 @@ async function checkDatabaseHealth(
   }
 }
 
-const app = new OpenAPIHono<{ Bindings: Environment }>();
+const app = new OpenAPIHono<{ Bindings: Environment }>({
+  defaultHook: (result, c) => {
+    if (!result.success) {
+      // Do not leak Zod issue details — they can reveal schema structure to attackers
+      return c.json(
+        { error: 'Validation error', message: 'Invalid request parameters' },
+        400
+      );
+    }
+  },
+});
+
+app.onError((err, c) => {
+  console.error('[UnhandledError]', err);
+  return c.json({ error: 'Internal server error' }, 500);
+});
 
 app.use(poweredBy());
 app.use(logger());
+
+function isSafeHttpUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    // Block private/loopback/link-local ranges
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1')
+      return false;
+    if (/^10\./.test(host)) return false;
+    if (/^192\.168\./.test(host)) return false;
+    if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return false;
+    if (/^169\.254\./.test(host)) return false;
+    if (/^fd[0-9a-f]{2}:/i.test(host)) return false;
+    // Block internal CROW service hostnames (SSRF via internal subdomain)
+    if (host.endsWith('.crowai.dev')) return false;
+    if (/\.internal\./i.test(host)) return false;
+    if (
+      host.endsWith('.internal') ||
+      host.endsWith('.local') ||
+      host.endsWith('.localhost')
+    )
+      return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 app.use('*', async (c, next) => {
   try {
@@ -63,6 +111,8 @@ const formatCrawlerJobResponse = (
   job: typeof schema.crawlerJob.$inferSelect
 ) => ({
   ...job,
+  sourceType: job.sourceType as 'url' | 'csv' | 'json',
+  status: job.status as 'pending' | 'in_progress' | 'completed' | 'failed',
   startedAt: job.startedAt?.toISOString() ?? null,
   completedAt: job.completedAt?.toISOString() ?? null,
   createdAt: job.createdAt.toISOString(),
@@ -167,19 +217,19 @@ const countProductsByOrganization = async (
   organizationId: string
 ) => {
   const results = await database
-    .select()
+    .select({ count: count() })
     .from(schema.product)
     .where(eq(schema.product.organizationId, organizationId));
-  return results.length;
+  return results[0]?.count ?? 0;
 };
 
 app.openapi(HealthCheckRoute, c => {
   return c.json({
-    status: 'healthy',
+    status: 'healthy' as const,
     timestamp: new Date().toISOString(),
     service: 'core-product-service',
     version: '1.0.0',
-    environment: c.env.ENVIRONMENT || 'prod',
+    environment: '',
   });
 });
 
@@ -201,9 +251,16 @@ app.openapi(ReadinessCheckRoute, async c => {
   );
 });
 
+const SAFE_R2_KEY_PATTERN = /^[\w\-./]{1,512}$/;
+
 app.openapi(GetProductImageRoute, async c => {
   const { key } = c.req.valid('param');
-  const object = await c.env.R2_BUCKET.get(decodeURIComponent(key));
+  const decodedKey = decodeURIComponent(key);
+  // Reject path traversal and keys that don't match the expected safe pattern
+  if (!SAFE_R2_KEY_PATTERN.test(decodedKey) || decodedKey.includes('..')) {
+    return c.json({ error: 'Not Found' }, 404);
+  }
+  const object = await c.env.R2_BUCKET.get(decodedKey);
   if (!object) return c.notFound();
   const headers = new Headers();
   object.writeHttpMetadata(headers);
@@ -220,8 +277,18 @@ app.openapi(CreateCrawlerJobRoute, async context => {
   const body = context.req.valid('json');
   const jobId = crypto.randomUUID();
   const timestamp = new Date();
-  const organizationId =
-    body.organizationId ?? context.req.header('X-Organization-Id') ?? '';
+  const callerOrgId = context.req.header('X-Organization-Id') ?? '';
+  const organizationId = body.organizationId ?? callerOrgId;
+
+  if (!callerOrgId || organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
 
   await createCrawlerJobInDatabase(
     database,
@@ -247,6 +314,7 @@ app.openapi(CreateCrawlerJobRoute, async context => {
 app.openapi(GetCrawlerJobRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { id } = context.req.valid('param');
+  const callerOrgId = context.req.header('X-Organization-Id');
 
   const job = await fetchCrawlerJobById(database, id);
   if (!job) {
@@ -262,12 +330,33 @@ app.openapi(GetCrawlerJobRoute, async context => {
     );
   }
 
+  if (!callerOrgId || job.organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+
   return context.json(formatCrawlerJobResponse(job));
 });
 
 app.openapi(GetCrawlerJobsByOrgRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { organizationId } = context.req.valid('param');
+  const callerOrgId = context.req.header('X-Organization-Id');
+
+  if (!callerOrgId || callerOrgId !== organizationId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
 
   const jobs = await fetchCrawlerJobsByOrganization(database, organizationId);
   return context.json({ jobs: jobs.map(formatCrawlerJobResponse) });
@@ -276,6 +365,18 @@ app.openapi(GetCrawlerJobsByOrgRoute, async context => {
 app.openapi(SearchProductsRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { q, organizationId, limit, mode } = context.req.valid('query');
+  const callerOrgId = context.req.header('X-Organization-Id');
+
+  if (!callerOrgId || organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+
   const maxResults = Math.min(Number.parseInt(limit ?? '10', 10) || 10, 50);
   const searchMode = mode ?? 'semantic';
 
@@ -393,16 +494,43 @@ app.openapi(GetProductRoute, async context => {
     );
   }
 
+  // BOLA: verify caller belongs to the same org as the product
+  const callerOrgId = context.req.header('X-Organization-Id');
+  if (!callerOrgId || product.organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this product',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+
   return context.json(formatProductResponse(product));
 });
 
 app.openapi(GetProductsByOrgRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { organizationId } = context.req.valid('param');
+  const callerOrgId = context.req.header('X-Organization-Id');
+
+  if (!callerOrgId || callerOrgId !== organizationId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+
   const { page: pageStr, pageSize: pageSizeStr } = context.req.valid('query');
 
-  const page = Number.parseInt(pageStr || '1', 10);
-  const pageSize = Number.parseInt(pageSizeStr || '20', 10);
+  const page = Math.max(1, Number.parseInt(pageStr || '1', 10) || 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number.parseInt(pageSizeStr || '20', 10) || 20)
+  );
 
   const products = await fetchPaginatedProductsByOrganization(
     database,
@@ -424,6 +552,7 @@ app.openapi(GetProductsByOrgRoute, async context => {
 app.openapi(TriggerCrawlerJobRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { id } = context.req.valid('param');
+  const callerOrgId = context.req.header('X-Organization-Id');
 
   const job = await fetchCrawlerJobById(database, id);
   if (!job) {
@@ -437,6 +566,16 @@ app.openapi(TriggerCrawlerJobRoute, async context => {
       },
       404
     );
+  }
+
+  if (!callerOrgId || job.organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
   }
 
   context.executionCtx.waitUntil(
@@ -459,6 +598,12 @@ app.openapi(TriggerCrawlerJobRoute, async context => {
 });
 
 app.openapi(DebugExtractRoute, async context => {
+  if (context.env.ENVIRONMENT !== 'local') {
+    return new Response(JSON.stringify({ error: 'Not Found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    }) as never;
+  }
   const { url } = context.req.valid('json');
   try {
     const pageContent = await crawlPageWithBrowser(context.env, url);
@@ -473,12 +618,12 @@ app.openapi(DebugExtractRoute, async context => {
       products,
       error: null,
     });
-  } catch (error) {
+  } catch {
     return context.json({
       html: '',
       htmlLength: 0,
       products: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: 'Extraction failed',
     });
   }
 });
@@ -486,6 +631,7 @@ app.openapi(DebugExtractRoute, async context => {
 app.openapi(GetProductAiDescriptionsRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { id } = context.req.valid('param');
+  const callerOrgId = context.req.header('X-Organization-Id');
 
   const product = await fetchProductById(database, id);
   if (!product) {
@@ -499,6 +645,16 @@ app.openapi(GetProductAiDescriptionsRoute, async context => {
       },
       404
     );
+  }
+
+  if (!callerOrgId || product.organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
   }
 
   const descriptions = await database
@@ -518,6 +674,12 @@ app.openapi(GetProductAiDescriptionsRoute, async context => {
 });
 
 app.openapi(DebugImageDescriptionRoute, async context => {
+  if (context.env.ENVIRONMENT !== 'local') {
+    return new Response(JSON.stringify({ error: 'Not Found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    }) as never;
+  }
   const { imageUrl } = context.req.valid('json');
   try {
     const result = await generateImageDescription(context.env, imageUrl);
@@ -536,7 +698,7 @@ app.openapi(DebugImageDescriptionRoute, async context => {
       ...result,
       error: null,
     });
-  } catch (error) {
+  } catch {
     return context.json({
       imageUrl,
       description: '',
@@ -544,7 +706,7 @@ app.openapi(DebugImageDescriptionRoute, async context => {
       colors: [],
       materials: [],
       style: '',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: 'Image description failed',
     });
   }
 });
@@ -554,8 +716,18 @@ app.openapi(CrawlNowRoute, async context => {
   const body = context.req.valid('json');
   const jobId = crypto.randomUUID();
   const timestamp = new Date();
-  const organizationId =
-    body.organizationId ?? context.req.header('X-Organization-Id') ?? '';
+  const callerOrgId = context.req.header('X-Organization-Id') ?? '';
+  const organizationId = body.organizationId ?? callerOrgId;
+
+  if (!callerOrgId || organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
 
   await createCrawlerJobInDatabase(
     database,
@@ -606,6 +778,25 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
   const { id } = context.req.valid('param');
   const body = context.req.valid('json');
 
+  // This endpoint is called by the crawler service (internal) or by the job owner.
+  // Accept if: caller presents the crawler service secret OR X-Organization-Id matches job owner.
+  const crawlerSecret = context.req
+    .header('Authorization')
+    ?.replace('Bearer ', '');
+  const callerOrgId = context.req.header('X-Organization-Id');
+  const isInternalCaller =
+    crawlerSecret && crawlerSecret === context.env.CRAWLER_SERVICE_SECRET;
+
+  if (!isInternalCaller) {
+    const job = await fetchCrawlerJobById(database, id);
+    if (!job || !callerOrgId || job.organizationId !== callerOrgId) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden', message: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      ) as never;
+    }
+  }
+
   await database
     .update(schema.crawlerJob)
     .set({
@@ -646,6 +837,114 @@ app.openapi(CompleteCrawlerJobRoute, async context => {
   }
 
   return context.json({ success: true });
+});
+
+app.use('/api/v1/products/bulk-image-upload', async (c, next) => {
+  const jwtMiddleware = createJWTMiddleware(c.env);
+  return jwtMiddleware(c, next);
+});
+
+app.openapi(BulkImageUploadRoute, async context => {
+  const database = drizzle(context.env.DB, { schema });
+  const { organizationId, imageUrls } = context.req.valid('json');
+  const callerOrgId = context.req.header('X-Organization-Id');
+
+  if (!callerOrgId || organizationId !== callerOrgId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden',
+        message: 'Access denied to this organization',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+
+  let processed = 0;
+  let failed = 0;
+  const results: { imageUrl: string; description: string; success: boolean }[] =
+    [];
+
+  for (const imageUrl of imageUrls) {
+    if (!isSafeHttpUrl(imageUrl)) {
+      results.push({ imageUrl, description: '', success: false });
+      failed++;
+      continue;
+    }
+    try {
+      // Find product by image URL to link the description
+      const matchingProducts = await database
+        .select()
+        .from(schema.product)
+        .where(eq(schema.product.organizationId, organizationId))
+        .limit(100);
+
+      const product = matchingProducts.find(p => {
+        try {
+          const imgs: string[] = JSON.parse(p.images);
+          return imgs.includes(imageUrl);
+        } catch {
+          return false;
+        }
+      });
+
+      const productId = product?.id ?? crypto.randomUUID();
+      const descriptions = await generateAndStoreDescriptions(
+        context.env,
+        productId,
+        [imageUrl]
+      );
+
+      if (descriptions.length > 0) {
+        const desc = descriptions[0];
+        results.push({
+          imageUrl,
+          description: desc.description,
+          success: true,
+        });
+        processed++;
+
+        // Trigger Vectorize embedding update if product exists
+        if (product) {
+          const aiDescs = await database
+            .select()
+            .from(schema.productAiDescription)
+            .where(eq(schema.productAiDescription.productId, product.id));
+
+          context.executionCtx.waitUntil(
+            embedProduct(
+              context.env,
+              {
+                id: product.id,
+                organizationId: product.organizationId,
+                title: product.title,
+                description: product.description,
+              },
+              aiDescs.map(d => ({ description: d.description }))
+            ).catch(err => {
+              console.error(
+                '[BulkImageUpload] Vectorize update failed for product',
+                product.id,
+                err
+              );
+            })
+          );
+        }
+      } else {
+        results.push({ imageUrl, description: '', success: false });
+        failed++;
+      }
+    } catch (err) {
+      console.error(
+        '[BulkImageUpload] Failed to process image:',
+        imageUrl,
+        err
+      );
+      results.push({ imageUrl, description: '', success: false });
+      failed++;
+    }
+  }
+
+  return context.json({ processed, failed, results });
 });
 
 app.doc('/api/docs', {
