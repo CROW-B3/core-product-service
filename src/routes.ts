@@ -238,7 +238,7 @@ export const SearchProductsRoute = createRoute({
   request: {
     query: z.object({
       q: z.string().min(1),
-      organizationId: z.string().uuid(),
+      organizationId: z.string().uuid().optional(),
       limit: z.string().optional(),
       mode: z.enum(['semantic', 'fts', 'hybrid']).optional(),
     }),

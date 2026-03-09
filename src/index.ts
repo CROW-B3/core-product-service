@@ -364,10 +364,25 @@ app.openapi(GetCrawlerJobsByOrgRoute, async context => {
 
 app.openapi(SearchProductsRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
-  const { q, organizationId, limit, mode } = context.req.valid('query');
+  const {
+    q,
+    organizationId: queryOrgId,
+    limit,
+    mode,
+  } = context.req.valid('query');
   const callerOrgId = context.req.header('X-Organization-Id');
+  const organizationId = callerOrgId || queryOrgId;
 
-  if (!callerOrgId || organizationId !== callerOrgId) {
+  if (!organizationId) {
+    return new Response(
+      JSON.stringify({
+        error: 'Bad Request',
+        message: 'Organization ID required',
+      }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    ) as never;
+  }
+  if (queryOrgId && callerOrgId && queryOrgId !== callerOrgId) {
     return new Response(
       JSON.stringify({
         error: 'Forbidden',
