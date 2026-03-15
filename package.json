@@ -23,7 +23,7 @@
   "dependencies": {
     "@antfu/eslint-config": "^6.7.3",
     "@cloudflare/puppeteer": "^1.0.5",
-    "@hono/swagger-ui": "^0.5.3",
+    "@hono/swagger-ui": "^0.6.1",
     "@hono/zod-openapi": "^1.2.0",
     "ai": "^6.0.49",
     "drizzle-orm": "^0.45.1",
