@@ -4,68 +4,167 @@
   "account_id": "8f0203259905d8923687286c84921e6c",
   "main": "src/index.ts",
   "compatibility_date": "2025-12-17",
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
   },
   "vars": {
     "ENVIRONMENT": "prod",
+    "AI_GATEWAY_ID": "crow-ai-gateway",
+    "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
   },
+  "browser": {
+    "binding": "BROWSER",
+  },
+  "ai": {
+    "binding": "AI",
+    "remote": true,
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CRAWLER_KV",
+      "id": "crow-product-crawler-kv",
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "crow-core-product-service-db",
-      "database_id": "f04c1d6d-60cf-4fe9-aed4-a2942bf0d11a"
-    }
+      "database_id": "f04c1d6d-60cf-4fe9-aed4-a2942bf0d11a",
+      "migrations_dir": "drizzle/migrations",
+    },
   ],
   "r2_buckets": [
     {
       "binding": "R2_BUCKET",
-      "bucket_name": "crow-core-product-service-store"
-    }
+      "bucket_name": "crow-core-product-service-store",
+    },
   ],
+  "queues": {
+    "producers": [
+      {
+        "queue": "crow-product-crawl-queue",
+        "binding": "PRODUCT_CRAWL_QUEUE",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "crow-product-crawl-queue",
+        "max_batch_size": 1,
+        "max_batch_timeout": 30,
+      },
+    ],
+  },
   "routes": [
-    { "pattern": "internal.products.crowai.dev", "custom_domain": true }
+    { "pattern": "internal.products.crowai.dev", "custom_domain": true },
   ],
   "env": {
     "dev": {
       "vars": {
         "ENVIRONMENT": "dev",
+        "AI_GATEWAY_ID": "crow-ai-gateway",
+        "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
+        "CRAWLER_SERVICE_URL": "https://crawler.crowai.dev",
       },
+      "ai": {
+        "binding": "AI",
+      },
+      "browser": {
+        "binding": "BROWSER",
+      },
+      "kv_namespaces": [
+        {
+          "binding": "CRAWLER_KV",
+          "id": "crow-product-crawler-kv-dev",
+        },
+      ],
       "routes": [
-        { "pattern": "dev.internal.products.crowai.dev", "custom_domain": true }
+        {
+          "pattern": "dev.internal.products.crowai.dev",
+          "custom_domain": true,
+        },
       ],
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "crow-core-product-service-db-dev",
-          "database_id": "44489847-8f54-437f-ae91-5c379c6f6671"
-        }
+          "database_id": "44489847-8f54-437f-ae91-5c379c6f6671",
+          "migrations_dir": "drizzle/migrations",
+        },
       ],
       "r2_buckets": [
         {
           "binding": "R2_BUCKET",
-          "bucket_name": "crow-core-product-service-store-dev"
-        }
-      ]
+          "bucket_name": "crow-core-product-service-store-dev",
+        },
+      ],
+      "queues": {
+        "producers": [
+          {
+            "queue": "crow-product-crawl-queue-dev",
+            "binding": "PRODUCT_CRAWL_QUEUE",
+          },
+        ],
+        "consumers": [
+          {
+            "queue": "crow-product-crawl-queue-dev",
+            "max_batch_size": 1,
+            "max_batch_timeout": 30,
+          },
+        ],
+      },
     },
     "local": {
       "vars": {
         "ENVIRONMENT": "local",
+        "AI_GATEWAY_ID": "crow-ai-gateway",
+        "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
+        "CRAWLER_SERVICE_URL": "http://localhost:8014",
       },
+      "ai": {
+        "binding": "AI",
+        "remote": true,
+      },
+      "browser": {
+        "binding": "BROWSER",
+      },
+      "kv_namespaces": [
+        {
+          "binding": "CRAWLER_KV",
+          "id": "crow-product-crawler-kv-local",
+          "preview_id": "crow-product-crawler-kv-local",
+        },
+      ],
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "crow-core-product-service-db-local",
-          "database_id": "28bfe4ff-4126-416b-a65e-bd9740184ff3"
-        }
+          "database_id": "28bfe4ff-4126-416b-a65e-bd9740184ff3",
+          "migrations_dir": "drizzle/migrations",
+        },
       ],
       "r2_buckets": [
         {
           "binding": "R2_BUCKET",
-          "bucket_name": "crow-core-product-service-store-local"
-        }
-      ]
+          "bucket_name": "crow-core-product-service-store-local",
+        },
+      ],
+      "queues": {
+        "producers": [
+          {
+            "queue": "crow-product-crawl-queue-local",
+            "binding": "PRODUCT_CRAWL_QUEUE",
+          },
+        ],
+        "consumers": [
+          {
+            "queue": "crow-product-crawl-queue-local",
+            "max_batch_size": 1,
+            "max_batch_timeout": 30,
+          },
+        ],
+      },
     },
   },
 }
