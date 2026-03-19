@@ -24,7 +24,7 @@
   "kv_namespaces": [
     {
       "binding": "CRAWLER_KV",
-      "id": "crow-product-crawler-kv",
+      "id": "3acc8119cbe3431aac32f38724cd9feb",
     },
   ],
   "d1_databases": [
