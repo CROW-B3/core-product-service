@@ -1,0 +1,45 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deploy environment'
+        required: false
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
+      triggered_by:
+        description: 'Trigger source (manual or orchestrator)'
+        required: false
+        type: string
+        default: 'manual'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: CROW-B3/.github/.github/workflows/reusable-worker-ci.yml@main
+    with:
+      service_name: 'core-product-service'
+      environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'dev' || inputs.environment || 'dev' }}
+      skip_deploy: ${{ github.event_name == 'pull_request' }}
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  deploy-production:
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+    uses: CROW-B3/.github/.github/workflows/reusable-worker-ci.yml@main
+    with:
+      service_name: 'core-product-service'
+      environment: production
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
