@@ -24,7 +24,7 @@
   "kv_namespaces": [
     {
       "binding": "CRAWLER_KV",
-      "id": "crow-product-crawler-kv",
+      "id": "3acc8119cbe3431aac32f38724cd9feb",
     },
   ],
   "d1_databases": [
@@ -76,7 +76,7 @@
       "kv_namespaces": [
         {
           "binding": "CRAWLER_KV",
-          "id": "crow-product-crawler-kv-dev",
+          "id": "64f6d2027d49434c9696f2dd18af73aa",
         },
       ],
       "routes": [
@@ -89,7 +89,7 @@
         {
           "binding": "DB",
           "database_name": "crow-core-product-service-db-dev",
-          "database_id": "44489847-8f54-437f-ae91-5c379c6f6671",
+          "database_id": "4d8e73e2-b069-46c4-96ad-ba2904112983",
           "migrations_dir": "drizzle/migrations",
         },
       ],
