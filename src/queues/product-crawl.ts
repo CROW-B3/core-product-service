@@ -130,16 +130,26 @@ export const processProductCrawlJob = async (
     let extractedProducts: ExtractedProduct[] = [];
 
     if (job.sourceType === 'url') {
-      const result = await crawlAndExtractProducts(
-        environment,
-        job.sourceValue,
-        {
-          maxPages: 30,
-          maxProducts: 100,
-          useSitemap: true,
-          useBrowserDiscovery: true,
-        }
+      const CRAWL_TIMEOUT_MS = 25_000;
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(`Crawl timed out after ${CRAWL_TIMEOUT_MS / 1000}s`)
+            ),
+          CRAWL_TIMEOUT_MS
+        )
       );
+      const result = await Promise.race([
+        crawlAndExtractProducts(environment, job.sourceValue, {
+          maxPages: 20,
+          maxProducts: 50,
+          useSitemap: true,
+          useBrowserDiscovery: false,
+          useCrawlerService: !!environment.CRAWLER_SERVICE_URL,
+        }),
+        timeoutPromise,
+      ]);
 
       extractedProducts = result.products;
 
