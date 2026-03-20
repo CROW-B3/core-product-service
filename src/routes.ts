@@ -7,6 +7,116 @@ import {
   ProductSchema,
 } from './types';
 
+export const CreateProductRoute = createRoute({
+  method: 'post',
+  path: '/api/v1/products',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            organizationId: z.string(),
+            name: z.string(),
+            description: z.string().optional().default(''),
+            price: z.number().optional().nullable(),
+            currency: z.string().optional().nullable(),
+            category: z.string().optional().nullable(),
+            url: z.string().optional().nullable(),
+            imageUrl: z.string().optional().nullable(),
+            sku: z.string().optional().nullable(),
+            inStock: z.boolean().optional().nullable(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: ProductSchema } },
+      description: 'Product created',
+    },
+  },
+});
+
+export const UpdateProductRoute = createRoute({
+  method: 'patch',
+  path: '/api/v1/products/{id}',
+  request: {
+    params: z.object({ id: z.string() }),
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            name: z.string().optional(),
+            description: z.string().optional(),
+            price: z.number().optional().nullable(),
+            currency: z.string().optional().nullable(),
+            category: z.string().optional().nullable(),
+            url: z.string().optional().nullable(),
+            imageUrl: z.string().optional().nullable(),
+            sku: z.string().optional().nullable(),
+            inStock: z.boolean().optional().nullable(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ProductSchema } },
+      description: 'Product updated',
+    },
+    404: {
+      description: 'Product not found',
+    },
+  },
+});
+
+export const SearchProductsRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/products/search',
+  request: {
+    query: z.object({
+      q: z.string(),
+      organizationId: z.string(),
+      limit: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ProductListSchema } },
+      description: 'Search results',
+    },
+  },
+});
+
+export const GetProductCategoriesRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/products/categories',
+  request: {
+    query: z.object({
+      organizationId: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            categories: z.array(
+              z.object({
+                name: z.string(),
+                count: z.number(),
+              })
+            ),
+          }),
+        },
+      },
+      description: 'Product categories',
+    },
+  },
+});
+
 export const HelloWorldRoute = createRoute({
   method: 'get',
   path: '/',

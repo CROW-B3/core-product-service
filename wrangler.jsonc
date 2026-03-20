@@ -65,7 +65,7 @@
         "ENVIRONMENT": "dev",
         "AI_GATEWAY_ID": "crow-ai-gateway",
         "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
-        "CRAWLER_SERVICE_URL": "https://crawler.crowai.dev",
+        "CRAWLER_SERVICE_URL": "https://infra-crawl-service-dev.bitbybit-b3.workers.dev",
       },
       "ai": {
         "binding": "AI",
