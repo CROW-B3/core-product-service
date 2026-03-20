@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   ci:
-    uses: CROW-B3/.github/.github/workflows/reusable-worker-ci.yml@main
+    uses: CROW-B3/.github/workflows/reusable-worker-ci.yml@main
     with:
       service_name: 'core-product-service'
       environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'dev' || inputs.environment || 'dev' }}
@@ -37,7 +37,7 @@ jobs:
 
   deploy-production:
     if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
-    uses: CROW-B3/.github/.github/workflows/reusable-worker-ci.yml@main
+    uses: CROW-B3/.github/workflows/reusable-worker-ci.yml@main
     with:
       service_name: 'core-product-service'
       environment: production
