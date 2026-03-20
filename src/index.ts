@@ -18,6 +18,7 @@ import {
   GetProductCategoriesRoute,
   GetProductRoute,
   GetProductsByOrgRoute,
+  HealthRoute,
   HelloWorldRoute,
   SearchProductsRoute,
   TriggerCrawlerJobRoute,
@@ -147,6 +148,10 @@ const countProductsByOrganization = async (
 
 app.openapi(HelloWorldRoute, context => {
   return context.json({ text: 'Hello from Product Service!' });
+});
+
+app.openapi(HealthRoute, context => {
+  return context.json({ status: 'ok', service: 'core-product-service' });
 });
 
 app.openapi(CreateCrawlerJobRoute, async context => {

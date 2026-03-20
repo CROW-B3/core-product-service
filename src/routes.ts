@@ -129,6 +129,25 @@ export const HelloWorldRoute = createRoute({
   },
 });
 
+export const HealthRoute = createRoute({
+  method: 'get',
+  path: '/health',
+  request: {},
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            status: z.string(),
+            service: z.string(),
+          }),
+        },
+      },
+      description: 'Health check',
+    },
+  },
+});
+
 export const CreateCrawlerJobRoute = createRoute({
   method: 'post',
   path: '/api/v1/crawler-jobs',
