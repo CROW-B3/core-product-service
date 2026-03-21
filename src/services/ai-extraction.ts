@@ -136,7 +136,10 @@ export const extractProductsFromHtmlChunk = async (
   chunkIndex: number,
   pageUrl: string
 ): Promise<ExtractedProduct[]> => {
-  const workersai = createWorkersAI({ binding: env.AI });
+  const workersai = createWorkersAI({
+    binding: env.AI,
+    gateway: { id: 'crow-ai-gateway', skipCache: false },
+  });
 
   try {
     console.warn(
@@ -145,9 +148,9 @@ export const extractProductsFromHtmlChunk = async (
 
     const result = await withRetry(async () => {
       return generateObject({
-        model: workersai(env.AI_MODEL),
+        model: workersai(env.AI_MODEL as any),
         schema: ExtractionSchema,
-        maxTokens: 4096,
+        maxOutputTokens: 4096,
         prompt: `Extract products from HTML. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
 
 HTML:
@@ -237,7 +240,10 @@ const extractProductsFromTextChunk = async (
   chunk: TextChunk,
   chunkIndex: number
 ): Promise<ExtractedProduct[]> => {
-  const workersai = createWorkersAI({ binding: env.AI });
+  const workersai = createWorkersAI({
+    binding: env.AI,
+    gateway: { id: 'crow-ai-gateway', skipCache: false },
+  });
 
   try {
     console.warn(
@@ -246,9 +252,9 @@ const extractProductsFromTextChunk = async (
 
     const result = await withRetry(async () => {
       return generateObject({
-        model: workersai(env.AI_MODEL),
+        model: workersai(env.AI_MODEL as any),
         schema: ExtractionSchema,
-        maxTokens: 4096,
+        maxOutputTokens: 4096,
         prompt: `Extract products from the following text content from a website. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
 
 Page URL: ${chunk.url}
