@@ -8,6 +8,7 @@ export interface Environment {
   BROWSER: BrowserWorker;
   CRAWLER_KV: KVNamespace;
   PRODUCT_CRAWL_QUEUE: Queue;
+  PRODUCT_VECTORIZE: VectorizeIndex;
   ENVIRONMENT: 'local' | 'dev' | 'prod';
   AI_GATEWAY_ID: string;
   AI_MODEL: string;
@@ -15,6 +16,9 @@ export interface Environment {
   CLOUDFLARE_D1_API_TOKEN: string;
   CRAWLER_SERVICE_URL: string;
   CRAWLER_SERVICE_SECRET: string;
+  PRODUCT_SERVICE_URL: string;
+  ORGANIZATION_SERVICE_URL: string;
+  INTERNAL_GATEWAY_KEY: string;
 }
 
 export interface CrawlState {

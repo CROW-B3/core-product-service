@@ -1,12 +1,14 @@
 import type { Environment } from '../types';
-import type { ExtractedProduct, TextChunk } from './ai-extraction';
+import type { ExtractedProduct } from './ai-extraction';
 import {
-  extractProductsFromChunks,
   extractProductsFromMultiplePages,
   extractProductsFromPage,
 } from './ai-extraction';
 import { crawlPageWithBrowser, discoverProductPages } from './browser-crawler';
-import { crawlWithService, isCrawlerServiceAvailable } from './crawler-client';
+import {
+  crawlWithServiceAsync,
+  isCrawlerServiceAvailable,
+} from './crawler-client';
 import {
   canCrawl,
   discoverProductUrlsFromSitemap,
@@ -20,6 +22,7 @@ export interface CrawlResult {
   pagesVisited: number;
   errors: string[];
   totalTime: number;
+  asyncJobId?: string;
 }
 
 const delay = (ms: number): Promise<void> =>
@@ -40,52 +43,44 @@ const normalizeUrl = (url: string): string => {
 const crawlWithCrawlerService = async (
   env: Environment,
   sourceUrl: string,
+  jobId: string,
+  organizationId: string,
   options: {
     maxPages?: number;
     maxProducts?: number;
   }
 ): Promise<CrawlResult> => {
   const startTime = Date.now();
-  const { maxPages = 30, maxProducts = 100 } = options;
+  const { maxPages = 30 } = options;
 
-  console.warn(`[CRAWLER] Using crawler service for ${sourceUrl}`);
+  console.warn(
+    `[CRAWLER] Using async crawler service for ${sourceUrl}, jobId: ${jobId}`
+  );
 
   try {
-    const crawlResponse = await crawlWithService(env, {
-      url: sourceUrl,
-      max_pages: maxPages,
-      depth_limit: 10,
-      use_playwright: 'auto',
-      chunk_size_tokens: 500,
-    });
-
-    if (!crawlResponse.success) {
-      return {
-        products: [],
-        pagesVisited: 0,
-        errors: crawlResponse.errors,
-        totalTime: Date.now() - startTime,
-      };
-    }
+    const asyncResponse = await crawlWithServiceAsync(
+      env,
+      jobId,
+      organizationId,
+      sourceUrl,
+      { maxPages }
+    );
 
     console.warn(
-      `[CRAWLER] Service returned ${crawlResponse.chunks.length} chunks from ${crawlResponse.metadata.total_pages} pages`
+      `[CRAWLER] Async crawl scheduled for jobId: ${jobId}, response: ${asyncResponse.message}`
     );
 
-    const products = await extractProductsFromChunks(
-      env,
-      crawlResponse.chunks as TextChunk[]
-    );
-
+    // Return immediately - the callback will handle product extraction
     return {
-      products: products.slice(0, maxProducts),
-      pagesVisited: crawlResponse.metadata.total_pages,
-      errors: crawlResponse.errors,
+      products: [],
+      pagesVisited: 0,
+      errors: [],
       totalTime: Date.now() - startTime,
+      asyncJobId: jobId,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[CRAWLER] Crawler service failed:`, error);
+    console.error(`[CRAWLER] Async crawler service failed:`, error);
     return {
       products: [],
       pagesVisited: 0,
@@ -104,6 +99,8 @@ export const crawlAndExtractProducts = async (
     useSitemap?: boolean;
     useBrowserDiscovery?: boolean;
     useCrawlerService?: boolean;
+    jobId?: string;
+    organizationId?: string;
   } = {}
 ): Promise<CrawlResult> => {
   const startTime = Date.now();
@@ -114,12 +111,17 @@ export const crawlAndExtractProducts = async (
     useSitemap = true,
     useBrowserDiscovery = true,
     useCrawlerService = true,
+    jobId,
+    organizationId,
   } = options;
 
-  if (useCrawlerService) {
+  if (useCrawlerService && jobId && organizationId) {
     const crawlerAvailable = await isCrawlerServiceAvailable(env);
     if (crawlerAvailable) {
-      return crawlWithCrawlerService(env, sourceUrl, { maxPages, maxProducts });
+      return crawlWithCrawlerService(env, sourceUrl, jobId, organizationId, {
+        maxPages,
+        maxProducts,
+      });
     }
     console.warn(
       `[CRAWLER] Crawler service not available, falling back to browser crawling`
