@@ -148,12 +148,44 @@ export const generateAndStoreDescriptions = async (
   return descriptions;
 };
 
+const IMAGE_EXTENSIONS = [
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.svg',
+  '.avif',
+];
+
+const isLikelyImageUrl = (url: string): boolean => {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return (
+      IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext)) ||
+      pathname.includes('/images/') ||
+      pathname.includes('/img/') ||
+      pathname.includes('/media/') ||
+      pathname.includes('/assets/')
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const generateDescriptionsForProduct = async (
   env: Environment,
   product: { id: string; images: string[] }
 ): Promise<ImageDescription[]> => {
+  const validImages = product.images.filter(isLikelyImageUrl);
+  if (validImages.length === 0) {
+    console.warn(
+      `[Vision] No valid image URLs for product ${product.id}, skipping`
+    );
+    return [];
+  }
   console.warn(
-    `[Vision] Processing ${product.images.length} images for product ${product.id}`
+    `[Vision] Processing ${validImages.length}/${product.images.length} images for product ${product.id}`
   );
-  return generateAndStoreDescriptions(env, product.id, product.images);
+  return generateAndStoreDescriptions(env, product.id, validImages);
 };
