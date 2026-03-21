@@ -8,6 +8,7 @@ import * as schema from './db/schema';
 import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
+  CrawlCallbackRoute,
   CreateCrawlerJobRoute,
   CreateProductRoute,
   DebugExtractRoute,
@@ -24,9 +25,20 @@ import {
   TriggerCrawlerJobRoute,
   UpdateProductRoute,
 } from './routes';
-import { extractProductsFromPage } from './services/ai-extraction';
+import {
+  extractProductsFromChunks,
+  extractProductsFromPage,
+} from './services/ai-extraction';
 import { crawlPageWithBrowser } from './services/browser-crawler';
-import { generateImageDescription } from './services/image-description';
+import { fetchCrawlResults } from './services/crawler-client';
+import {
+  generateDescriptionsForProduct,
+  generateImageDescription,
+} from './services/image-description';
+import {
+  searchProducts,
+  vectorizeProducts,
+} from './services/product-vectorize';
 
 const app = new OpenAPIHono<{ Bindings: Environment }>();
 app.use(poweredBy());
@@ -234,8 +246,50 @@ app.openapi(SearchProductsRoute, async context => {
   const database = drizzle(context.env.DB, { schema });
   const { q, organizationId, limit: limitStr } = context.req.valid('query');
   const limit = Number.parseInt(limitStr || '20', 10);
-  const searchTerm = `%${q}%`;
 
+  try {
+    // Use vectorize for semantic search
+    const vectorResults = await searchProducts(
+      context.env,
+      q,
+      organizationId,
+      limit
+    );
+
+    if (vectorResults.length > 0) {
+      const productIds = vectorResults.map(r => r.id);
+      const products = await database
+        .select()
+        .from(schema.product)
+        .where(
+          sql`${schema.product.id} IN (${sql.join(
+            productIds.map(id => sql`${id}`),
+            sql`, `
+          )})`
+        );
+
+      // Sort by vector search score order
+      const productMap = new Map(products.map(p => [p.id, p]));
+      const sortedProducts = productIds
+        .map(id => productMap.get(id))
+        .filter(Boolean) as (typeof schema.product.$inferSelect)[];
+
+      return context.json({
+        products: sortedProducts.map(formatProductResponse),
+        total: sortedProducts.length,
+        page: 1,
+        pageSize: limit,
+      });
+    }
+  } catch (err) {
+    console.error(
+      '[search] Vectorize search failed, falling back to SQL:',
+      err
+    );
+  }
+
+  // Fallback to SQL LIKE search
+  const searchTerm = `%${q}%`;
   const products = await database
     .select()
     .from(schema.product)
@@ -447,6 +501,233 @@ app.openapi(DebugImageDescriptionRoute, async context => {
       materials: [],
       style: '',
       error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+app.openapi(CrawlCallbackRoute, async context => {
+  // Validate shared secret - this endpoint bypasses the API gateway
+  const crawlerSecret = context.env.CRAWLER_SERVICE_SECRET;
+  if (crawlerSecret) {
+    const requestSecret = context.req.header('X-Crawler-Secret');
+    if (requestSecret !== crawlerSecret) {
+      return context.json({ error: 'Unauthorized' }, 401);
+    }
+  }
+
+  const database = drizzle(context.env.DB, { schema });
+  const { id: jobId } = context.req.valid('param');
+  const body = context.req.valid('json');
+
+  // Fetch the job to verify it exists and get the organizationId
+  const job = await fetchCrawlerJobById(database, jobId);
+  if (!job) {
+    return context.json({ error: 'Not found' }, 404);
+  }
+
+  // Idempotency: if the job is already completed or failed, skip processing
+  if (job.status === 'completed' || job.status === 'failed') {
+    return context.json({
+      success: true,
+      message: `Job already ${job.status}, skipping duplicate callback`,
+    });
+  }
+
+  // Handle error callback from crawler service
+  if (body.error) {
+    console.error(`[CALLBACK] Crawl failed for job ${jobId}: ${body.error}`);
+    await database
+      .update(schema.crawlerJob)
+      .set({
+        status: 'failed',
+        errorMessage: body.error,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.crawlerJob.id, jobId));
+
+    return context.json({
+      success: true,
+      message: 'Job marked as failed',
+    });
+  }
+
+  // Handle success callback
+  if (!body.crawlId) {
+    return context.json({
+      success: false,
+      message: 'Missing crawlId in callback payload',
+    });
+  }
+
+  try {
+    // Fetch crawl results from infra-crawl-service
+    const crawlResults = await fetchCrawlResults(context.env, body.crawlId);
+
+    console.warn(
+      `[CALLBACK] Fetched ${crawlResults.chunks.length} chunks for job ${jobId}`
+    );
+
+    // Convert chunks to the format expected by extractProductsFromChunks
+    const textChunks = crawlResults.chunks.map(chunk => ({
+      url: chunk.url,
+      title: chunk.title,
+      chunk_index: chunk.chunk_index,
+      total_chunks_for_page: 1,
+      text: chunk.text,
+      word_count: chunk.word_count,
+      crawled_at: crawlResults.metadata.timestamp,
+    }));
+
+    // Extract products from chunks
+    const extractedProducts = await extractProductsFromChunks(
+      context.env,
+      textChunks
+    );
+
+    console.warn(
+      `[CALLBACK] Extracted ${extractedProducts.length} products for job ${jobId}`
+    );
+
+    // Save products to database
+    const timestamp = new Date();
+    const savedProducts: Array<{
+      id: string;
+      organizationId: string;
+      title: string;
+      description: string;
+      category: string | null;
+      price: number | null;
+      images: string[];
+    }> = [];
+
+    for (const product of extractedProducts) {
+      const productId = crypto.randomUUID();
+      await database.insert(schema.product).values({
+        id: productId,
+        organizationId: job.organizationId,
+        externalId: product.id,
+        title: product.title,
+        description: product.description,
+        images: JSON.stringify(product.images),
+        price: product.price ? Math.round(product.price * 100) : null,
+        category: product.category ?? null,
+        metadata: JSON.stringify({
+          brand: product.brand,
+          currency: product.currency,
+          variants: product.variants,
+          inStock: product.inStock,
+          sourceUrl: product.url,
+        }),
+        crawlerJobId: jobId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      savedProducts.push({
+        id: productId,
+        organizationId: job.organizationId,
+        title: product.title,
+        description: product.description,
+        category: product.category ?? null,
+        price: product.price ? Math.round(product.price * 100) : null,
+        images: product.images,
+      });
+    }
+
+    // Mark job as completed
+    await database
+      .update(schema.crawlerJob)
+      .set({
+        status: 'completed',
+        productsFound: extractedProducts.length,
+        productsProcessed: extractedProducts.length,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.crawlerJob.id, jobId));
+
+    // Generate AI image descriptions
+    console.warn(
+      `[CALLBACK] Starting AI description generation for ${savedProducts.length} products`
+    );
+    for (const product of savedProducts) {
+      if (product.images.length > 0) {
+        try {
+          await generateDescriptionsForProduct(context.env, {
+            id: product.id,
+            images: product.images.slice(0, 3),
+          });
+        } catch (descError) {
+          console.error(
+            `[CALLBACK] Failed to generate descriptions for product ${product.id}:`,
+            descError
+          );
+        }
+      }
+    }
+    console.warn(`[CALLBACK] AI description generation complete`);
+
+    // Vectorize products for search
+    try {
+      await vectorizeProducts(context.env, savedProducts);
+      console.warn(`[CALLBACK] Vectorized ${savedProducts.length} products`);
+    } catch (err) {
+      console.error('[CALLBACK] Failed to vectorize products:', err);
+    }
+
+    // Trigger organization context generation
+    try {
+      const orgContextUrl = context.env.ORGANIZATION_SERVICE_URL || '';
+      if (orgContextUrl) {
+        await fetch(
+          `${orgContextUrl}/api/v1/organizations/${job.organizationId}/context/trigger?crawl_id=${jobId}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(context.env.INTERNAL_GATEWAY_KEY
+                ? { 'X-Internal-Key': context.env.INTERNAL_GATEWAY_KEY }
+                : {}),
+            },
+            body: JSON.stringify({}),
+          }
+        );
+        console.warn(
+          `[CALLBACK] Triggered org context generation for ${job.organizationId}`
+        );
+      }
+    } catch (err) {
+      console.error(
+        '[CALLBACK] Failed to trigger org context generation:',
+        err
+      );
+    }
+
+    return context.json({
+      success: true,
+      message: `Processed ${extractedProducts.length} products`,
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error(
+      `[CALLBACK] Failed to process callback for job ${jobId}:`,
+      error
+    );
+
+    // Mark job as failed
+    await database
+      .update(schema.crawlerJob)
+      .set({
+        status: 'failed',
+        errorMessage: `Callback processing failed: ${errorMsg}`,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.crawlerJob.id, jobId));
+
+    return context.json({
+      success: false,
+      message: `Failed to process callback: ${errorMsg}`,
     });
   }
 });

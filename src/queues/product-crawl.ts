@@ -9,6 +9,7 @@ import {
   extractProductsFromJson,
 } from '../services/extraction';
 import { generateDescriptionsForProduct } from '../services/image-description';
+import { vectorizeProducts } from '../services/product-vectorize';
 
 const markJobAsInProgress = async (
   database: ReturnType<typeof drizzle>,
@@ -72,6 +73,11 @@ const fetchCrawlerJobFromDatabase = async (
 
 interface SavedProduct {
   id: string;
+  organizationId: string;
+  title: string;
+  description: string;
+  category: string | null;
+  price: number | null;
   images: string[];
 }
 
@@ -106,7 +112,15 @@ const saveProductsToDatabase = async (
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    savedProducts.push({ id: productId, images: product.images });
+    savedProducts.push({
+      id: productId,
+      organizationId,
+      title: product.title,
+      description: product.description,
+      category: product.category ?? null,
+      price: product.price ? Math.round(product.price * 100) : null,
+      images: product.images,
+    });
   }
 
   return savedProducts;
@@ -139,8 +153,20 @@ export const processProductCrawlJob = async (
           useSitemap: true,
           useBrowserDiscovery: false,
           useCrawlerService: !!environment.CRAWLER_SERVICE_URL,
+          jobId,
+          organizationId,
         }
       );
+
+      // If an async job was scheduled, the callback will handle product
+      // extraction and job completion. Return early and leave the job
+      // in "in_progress" status.
+      if (result.asyncJobId) {
+        console.warn(
+          `[QUEUE] Async crawl scheduled for job ${jobId}, waiting for callback`
+        );
+        return;
+      }
 
       extractedProducts = result.products;
 
@@ -185,6 +211,40 @@ export const processProductCrawlJob = async (
       }
     }
     console.warn(`[QUEUE] AI description generation complete`);
+
+    // Vectorize products for search
+    try {
+      await vectorizeProducts(environment, savedProducts);
+      console.warn(`[crawl] Vectorized ${savedProducts.length} products`);
+    } catch (err) {
+      console.error('[crawl] Failed to vectorize products:', err);
+      // Don't fail the job - vectorization can be retried
+    }
+
+    // Trigger organization context generation
+    try {
+      const orgContextUrl = environment.ORGANIZATION_SERVICE_URL || '';
+      if (orgContextUrl) {
+        await fetch(
+          `${orgContextUrl}/api/v1/organizations/${organizationId}/context/trigger?crawl_id=${jobId}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(environment.INTERNAL_GATEWAY_KEY
+                ? { 'X-Internal-Key': environment.INTERNAL_GATEWAY_KEY }
+                : {}),
+            },
+            body: JSON.stringify({}),
+          }
+        );
+        console.warn(
+          `[crawl] Triggered org context generation for ${organizationId}`
+        );
+      }
+    } catch (err) {
+      console.error('[crawl] Failed to trigger org context generation:', err);
+    }
   } catch (error) {
     console.error(`[QUEUE] Job ${jobId} failed:`, error);
     await markJobAsFailed(database, jobId, extractErrorMessage(error));

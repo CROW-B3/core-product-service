@@ -4,11 +4,27 @@ import { createWorkersAI } from 'workers-ai-provider';
 import { z } from 'zod';
 
 const ProductSchema = z.object({
-  title: z.string(),
-  description: z.string(),
-  images: z.array(z.string()),
-  price: z.number().nullable(),
-  currency: z.string().nullable(),
+  title: z.string().describe('Product name/title'),
+  description: z.string().describe('Brief product description, 1-2 sentences'),
+  imageUrls: z
+    .array(z.string())
+    .describe(
+      'ONLY actual image file URLs (ending in .jpg, .jpeg, .png, .webp, .gif, .avif). Extract from <img src="..."> tags. Do NOT include page URLs or links.'
+    ),
+  price: z
+    .number()
+    .nullable()
+    .describe('Numeric price value only, no currency symbols'),
+  currency: z
+    .string()
+    .nullable()
+    .describe('ISO currency code like USD, EUR, GBP'),
+  additionalInfo: z
+    .string()
+    .nullable()
+    .describe(
+      'Any extra product details: brand, materials, sizes, colors, tags, or other notable attributes combined as a single string'
+    ),
 });
 
 const ExtractionSchema = z.object({
@@ -22,11 +38,8 @@ export interface ExtractedProduct {
   images: string[];
   price: number | null;
   currency: string | null;
-  category: string | null;
-  brand: string | null;
-  variants: Array<{ name: string; value: string }> | null;
-  inStock: boolean | null;
   url: string | null;
+  metadata: string | null;
 }
 
 const cleanHtmlForExtraction = (html: string): string => {
@@ -114,20 +127,24 @@ const isGenericProductName = (title: string): boolean => {
 const deduplicateProducts = (
   products: ExtractedProduct[]
 ): ExtractedProduct[] => {
-  const seen = new Map<string, ExtractedProduct>();
+  const seenByTitle = new Map<string, ExtractedProduct>();
+  const seenByUrl = new Set<string>();
 
   for (const product of products) {
-    const key = product.title.toLowerCase().trim();
-    if (
-      !seen.has(key) &&
-      product.price !== null &&
-      !isGenericProductName(product.title)
-    ) {
-      seen.set(key, product);
+    if (isGenericProductName(product.title)) continue;
+
+    const titleKey = product.title.toLowerCase().trim();
+    const urlKey = product.url?.toLowerCase().trim();
+
+    if (urlKey && seenByUrl.has(urlKey) && seenByTitle.has(titleKey)) continue;
+
+    if (!seenByTitle.has(titleKey)) {
+      seenByTitle.set(titleKey, product);
+      if (urlKey) seenByUrl.add(urlKey);
     }
   }
 
-  return Array.from(seen.values());
+  return Array.from(seenByTitle.values());
 };
 
 export const extractProductsFromHtmlChunk = async (
@@ -151,9 +168,15 @@ export const extractProductsFromHtmlChunk = async (
         model: workersai(env.AI_MODEL as any),
         schema: ExtractionSchema,
         maxOutputTokens: 4096,
-        prompt: `Extract products from HTML. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
+        prompt: `You are a product data extractor. Analyze this HTML and extract all products you find.
 
-HTML:
+CRITICAL RULES:
+- For imageUrls: ONLY include actual image file URLs (must end in .jpg, .jpeg, .png, .webp, .gif, .svg, or .avif). Look for <img> tag src attributes. NEVER include page/product URLs.
+- For price: Extract the numeric value only (e.g., 29.99 not "$29.99")
+- For additionalInfo: Include any extra details like brand, materials, sizes, colors, tags, or notable attributes as a single string
+- If no products are found in this content, return an empty products array
+
+HTML Content:
 ${htmlChunk}`,
       });
     });
@@ -166,14 +189,11 @@ ${htmlChunk}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.images.filter(img => img && img.length > 0),
+      images: p.imageUrls.filter((img: string) => img && img.length > 0),
       price: p.price,
       currency: p.currency,
-      category: null,
-      brand: null,
-      variants: null,
-      inStock: null,
       url: pageUrl,
+      metadata: p.additionalInfo,
     }));
   } catch (error) {
     console.error(`[AI] Chunk ${chunkIndex} failed:`, error);
@@ -255,10 +275,15 @@ const extractProductsFromTextChunk = async (
         model: workersai(env.AI_MODEL as any),
         schema: ExtractionSchema,
         maxOutputTokens: 4096,
-        prompt: `Extract products from the following text content from a website. For each product find: title, description (brief), ALL image URLs (array), price (number only), currency code.
+        prompt: `You are a product data extractor. Analyze this text content from a website and extract all products.
 
-Page URL: ${chunk.url}
-Page Title: ${chunk.title}
+CRITICAL RULES:
+- For imageUrls: ONLY include actual image file URLs found in the text (must end in .jpg, .jpeg, .png, .webp, etc). NEVER include page URLs or product page links.
+- For price: Extract the numeric value only
+- For category: Infer from the page title and content context
+- For brand: Look for brand names mentioned
+
+Page: ${chunk.title} (${chunk.url})
 
 Content:
 ${chunk.text}`,
@@ -273,13 +298,10 @@ ${chunk.text}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.images.filter(img => img && img.length > 0),
+      images: p.imageUrls.filter((img: string) => img && img.length > 0),
       price: p.price,
       currency: p.currency,
-      category: null,
-      brand: null,
-      variants: null,
-      inStock: null,
+      metadata: p.additionalInfo,
       url: chunk.url,
     }));
   } catch (error) {

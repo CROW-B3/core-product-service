@@ -318,6 +318,47 @@ export const GetProductAiDescriptionsRoute = createRoute({
   },
 });
 
+export const CrawlCallbackRoute = createRoute({
+  method: 'post',
+  path: '/api/v1/crawler-jobs/{id}/crawl-callback',
+  request: {
+    params: z.object({ id: z.string() }),
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            crawlId: z.string().optional(),
+            productsFound: z.number().optional(),
+            error: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            message: z.string(),
+          }),
+        },
+      },
+      description: 'Callback processed',
+    },
+    401: {
+      description: 'Unauthorized',
+    },
+    404: {
+      description: 'Job not found',
+    },
+    409: {
+      description: 'Job already processed',
+    },
+  },
+});
+
 export const DebugImageDescriptionRoute = createRoute({
   method: 'post',
   path: '/api/v1/debug/image-description',
