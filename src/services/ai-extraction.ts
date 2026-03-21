@@ -38,11 +38,8 @@ export interface ExtractedProduct {
   images: string[];
   price: number | null;
   currency: string | null;
-  category: string | null;
-  brand: string | null;
-  variants: Array<{ name: string; value: string }> | null;
-  inStock: boolean | null;
   url: string | null;
+  metadata: string | null;
 }
 
 const cleanHtmlForExtraction = (html: string): string => {
@@ -176,8 +173,7 @@ export const extractProductsFromHtmlChunk = async (
 CRITICAL RULES:
 - For imageUrls: ONLY include actual image file URLs (must end in .jpg, .jpeg, .png, .webp, .gif, .svg, or .avif). Look for <img> tag src attributes. NEVER include page/product URLs.
 - For price: Extract the numeric value only (e.g., 29.99 not "$29.99")
-- For category: Infer from context (page structure, breadcrumbs, product type)
-- For brand: Look for brand names in the product listing
+- For additionalInfo: Include any extra details like brand, materials, sizes, colors, tags, or notable attributes as a single string
 - If no products are found in this content, return an empty products array
 
 HTML Content:
@@ -193,14 +189,11 @@ ${htmlChunk}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.imageUrls.filter(img => img && img.length > 0),
+      images: p.imageUrls.filter((img: string) => img && img.length > 0),
       price: p.price,
       currency: p.currency,
-      category: p.category,
-      brand: p.brand,
-      variants: null,
-      inStock: p.inStock,
       url: pageUrl,
+      metadata: p.additionalInfo,
     }));
   } catch (error) {
     console.error(`[AI] Chunk ${chunkIndex} failed:`, error);
@@ -305,13 +298,10 @@ ${chunk.text}`,
       id: `prod-${chunkIndex}-${i + 1}`,
       title: p.title,
       description: p.description,
-      images: p.imageUrls.filter(img => img && img.length > 0),
+      images: p.imageUrls.filter((img: string) => img && img.length > 0),
       price: p.price,
       currency: p.currency,
-      category: p.category,
-      brand: p.brand,
-      variants: null,
-      inStock: p.inStock,
+      metadata: p.additionalInfo,
       url: chunk.url,
     }));
   } catch (error) {
