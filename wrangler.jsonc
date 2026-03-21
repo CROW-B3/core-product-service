@@ -121,6 +121,7 @@
         "AI_GATEWAY_ID": "crow-ai-gateway",
         "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct",
         "CRAWLER_SERVICE_URL": "http://localhost:8014",
+        "CRAWLER_SERVICE_SECRET": "crow-crawler-local-secret-2024",
       },
       "ai": {
         "binding": "AI",
