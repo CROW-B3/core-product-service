@@ -84,11 +84,15 @@ export const generateImageDescription = async (
   if (!imageBytes) return null;
 
   try {
-    const response = (await env.AI.run(VISION_MODEL, {
-      image: imageBytes,
-      prompt: `Describe this product for an e-commerce store. Include the item type, colors, style, and any visible features. Be detailed and helpful for online shoppers.`,
-      max_tokens: 256,
-    })) as { description: string };
+    const response = (await env.AI.run(
+      VISION_MODEL,
+      {
+        image: imageBytes,
+        prompt: `Describe this product for an e-commerce store. Include the item type, colors, style, and any visible features. Be detailed and helpful for online shoppers.`,
+        max_tokens: 256,
+      },
+      { gateway: { id: 'crow-ai-gateway', skipCache: false } }
+    )) as { description: string };
 
     return {
       imageUrl,
