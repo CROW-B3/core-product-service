@@ -58,6 +58,7 @@ const formatProductResponse = (
   product: typeof schema.product.$inferSelect
 ) => ({
   ...product,
+  name: product.title,
   images: JSON.parse(product.images),
   metadata: product.metadata ? JSON.parse(product.metadata) : null,
   createdAt: product.createdAt.toISOString(),
