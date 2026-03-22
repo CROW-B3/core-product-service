@@ -280,8 +280,7 @@ const extractProductsFromTextChunk = async (
 CRITICAL RULES:
 - For imageUrls: ONLY include actual image file URLs found in the text (must end in .jpg, .jpeg, .png, .webp, etc). NEVER include page URLs or product page links.
 - For price: Extract the numeric value only
-- For category: Infer from the page title and content context
-- For brand: Look for brand names mentioned
+- For additionalInfo: Include any extra details like brand, materials, sizes, colors, tags, or notable attributes as a single string
 
 Page: ${chunk.title} (${chunk.url})
 
