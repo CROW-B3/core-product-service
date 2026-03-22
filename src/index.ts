@@ -58,6 +58,7 @@ const formatProductResponse = (
   product: typeof schema.product.$inferSelect
 ) => ({
   ...product,
+  name: product.title,
   images: JSON.parse(product.images),
   metadata: product.metadata ? JSON.parse(product.metadata) : null,
   createdAt: product.createdAt.toISOString(),
@@ -611,12 +612,12 @@ app.openapi(CrawlCallbackRoute, async context => {
         description: product.description,
         images: JSON.stringify(product.images),
         price: product.price ? Math.round(product.price * 100) : null,
-        category: product.category ?? null,
+        category: null ?? null,
         metadata: JSON.stringify({
-          brand: product.brand,
+          brand: null,
           currency: product.currency,
-          variants: product.variants,
-          inStock: product.inStock,
+          variants: null,
+          inStock: null,
           sourceUrl: product.url,
         }),
         crawlerJobId: jobId,
@@ -628,7 +629,7 @@ app.openapi(CrawlCallbackRoute, async context => {
         organizationId: job.organizationId,
         title: product.title,
         description: product.description,
-        category: product.category ?? null,
+        category: null ?? null,
         price: product.price ? Math.round(product.price * 100) : null,
         images: product.images,
       });
@@ -667,10 +668,24 @@ app.openapi(CrawlCallbackRoute, async context => {
     }
     console.warn(`[CALLBACK] AI description generation complete`);
 
-    // Vectorize products for search
+    // Vectorize products for search (include AI image descriptions)
     try {
-      await vectorizeProducts(context.env, savedProducts);
-      console.warn(`[CALLBACK] Vectorized ${savedProducts.length} products`);
+      const productsWithDescriptions = await Promise.all(
+        savedProducts.map(async product => {
+          const descriptions = await database
+            .select({ description: schema.productAiDescription.description })
+            .from(schema.productAiDescription)
+            .where(eq(schema.productAiDescription.productId, product.id));
+          return {
+            ...product,
+            imageDescriptions: descriptions.map(d => d.description),
+          };
+        })
+      );
+      await vectorizeProducts(context.env, productsWithDescriptions);
+      console.warn(
+        `[CALLBACK] Vectorized ${savedProducts.length} products with image descriptions`
+      );
     } catch (err) {
       console.error('[CALLBACK] Failed to vectorize products:', err);
     }

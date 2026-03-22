@@ -160,13 +160,17 @@ const IMAGE_EXTENSIONS = [
 
 const isLikelyImageUrl = (url: string): boolean => {
   try {
-    const pathname = new URL(url).pathname.toLowerCase();
+    const u = new URL(url);
+    const pathname = u.pathname.toLowerCase();
     return (
       IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext)) ||
       pathname.includes('/images/') ||
       pathname.includes('/img/') ||
       pathname.includes('/media/') ||
-      pathname.includes('/assets/')
+      pathname.includes('/assets/') ||
+      u.hostname.includes('unsplash.com') ||
+      u.hostname.includes('cloudinary.com') ||
+      u.hostname.includes('cdn.')
     );
   } catch {
     return false;

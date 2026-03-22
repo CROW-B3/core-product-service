@@ -100,12 +100,12 @@ const saveProductsToDatabase = async (
       description: product.description,
       images: JSON.stringify(product.images),
       price: product.price ? Math.round(product.price * 100) : null,
-      category: product.category ?? null,
+      category: null ?? null,
       metadata: JSON.stringify({
-        brand: product.brand,
+        brand: null,
         currency: product.currency,
-        variants: product.variants,
-        inStock: product.inStock,
+        variants: null,
+        inStock: null,
         sourceUrl: product.url,
       }),
       crawlerJobId: jobId,
@@ -117,7 +117,7 @@ const saveProductsToDatabase = async (
       organizationId,
       title: product.title,
       description: product.description,
-      category: product.category ?? null,
+      category: null ?? null,
       price: product.price ? Math.round(product.price * 100) : null,
       images: product.images,
     });
@@ -212,10 +212,24 @@ export const processProductCrawlJob = async (
     }
     console.warn(`[QUEUE] AI description generation complete`);
 
-    // Vectorize products for search
+    // Vectorize products for search (include AI image descriptions)
     try {
-      await vectorizeProducts(environment, savedProducts);
-      console.warn(`[crawl] Vectorized ${savedProducts.length} products`);
+      const productsWithDescriptions = await Promise.all(
+        savedProducts.map(async product => {
+          const descriptions = await database
+            .select({ description: schema.productAiDescription.description })
+            .from(schema.productAiDescription)
+            .where(eq(schema.productAiDescription.productId, product.id));
+          return {
+            ...product,
+            imageDescriptions: descriptions.map(d => d.description),
+          };
+        })
+      );
+      await vectorizeProducts(environment, productsWithDescriptions);
+      console.warn(
+        `[crawl] Vectorized ${savedProducts.length} products with image descriptions`
+      );
     } catch (err) {
       console.error('[crawl] Failed to vectorize products:', err);
       // Don't fail the job - vectorization can be retried

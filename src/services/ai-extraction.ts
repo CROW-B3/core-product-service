@@ -9,7 +9,7 @@ const ProductSchema = z.object({
   imageUrls: z
     .array(z.string())
     .describe(
-      'ONLY actual image file URLs (ending in .jpg, .jpeg, .png, .webp, .gif, .avif). Extract from <img src="..."> tags. Do NOT include page URLs or links.'
+      'Product image URLs. Extract from <img> tag src, srcset, or data-src attributes. For Next.js images, extract the original URL from srcset (e.g., the unsplash/cloudinary/CDN URL, not the /_next/image proxy URL). Only include URLs that point to actual images.'
     ),
   price: z
     .number()
@@ -171,7 +171,7 @@ export const extractProductsFromHtmlChunk = async (
         prompt: `You are a product data extractor. Analyze this HTML and extract all products you find.
 
 CRITICAL RULES:
-- For imageUrls: ONLY include actual image file URLs (must end in .jpg, .jpeg, .png, .webp, .gif, .svg, or .avif). Look for <img> tag src attributes. NEVER include page/product URLs.
+- For imageUrls: Extract image URLs from <img> tags. Check src, srcset, and data-src attributes. For Next.js images (/_next/image?url=...), extract and decode the original image URL from the query parameter. Include CDN URLs (unsplash.com, cloudinary, etc). Do NOT include SVG icons, logos, or placeholder images.
 - For price: Extract the numeric value only (e.g., 29.99 not "$29.99")
 - For additionalInfo: Include any extra details like brand, materials, sizes, colors, tags, or notable attributes as a single string
 - If no products are found in this content, return an empty products array
@@ -278,10 +278,9 @@ const extractProductsFromTextChunk = async (
         prompt: `You are a product data extractor. Analyze this text content from a website and extract all products.
 
 CRITICAL RULES:
-- For imageUrls: ONLY include actual image file URLs found in the text (must end in .jpg, .jpeg, .png, .webp, etc). NEVER include page URLs or product page links.
+- For imageUrls: Extract image URLs from <img> tags. Check src, srcset, and data-src attributes. For Next.js images (/_next/image?url=...), extract and decode the original image URL from the query parameter. Include CDN URLs (unsplash.com, cloudinary, etc). Do NOT include SVG icons, logos, or placeholder images.
 - For price: Extract the numeric value only
-- For category: Infer from the page title and content context
-- For brand: Look for brand names mentioned
+- For additionalInfo: Include any extra details like brand, materials, sizes, colors, tags, or notable attributes as a single string
 
 Page: ${chunk.title} (${chunk.url})
 

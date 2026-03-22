@@ -75,6 +75,7 @@ export const ProductSchema = z
     id: z.string(),
     organizationId: z.string(),
     externalId: z.string(),
+    name: z.string(),
     title: z.string(),
     description: z.string(),
     images: z.array(z.string()),
