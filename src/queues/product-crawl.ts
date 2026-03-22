@@ -212,10 +212,24 @@ export const processProductCrawlJob = async (
     }
     console.warn(`[QUEUE] AI description generation complete`);
 
-    // Vectorize products for search
+    // Vectorize products for search (include AI image descriptions)
     try {
-      await vectorizeProducts(environment, savedProducts);
-      console.warn(`[crawl] Vectorized ${savedProducts.length} products`);
+      const productsWithDescriptions = await Promise.all(
+        savedProducts.map(async product => {
+          const descriptions = await database
+            .select({ description: schema.productAiDescription.description })
+            .from(schema.productAiDescription)
+            .where(eq(schema.productAiDescription.productId, product.id));
+          return {
+            ...product,
+            imageDescriptions: descriptions.map(d => d.description),
+          };
+        })
+      );
+      await vectorizeProducts(environment, productsWithDescriptions);
+      console.warn(
+        `[crawl] Vectorized ${savedProducts.length} products with image descriptions`
+      );
     } catch (err) {
       console.error('[crawl] Failed to vectorize products:', err);
       // Don't fail the job - vectorization can be retried

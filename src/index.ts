@@ -668,10 +668,24 @@ app.openapi(CrawlCallbackRoute, async context => {
     }
     console.warn(`[CALLBACK] AI description generation complete`);
 
-    // Vectorize products for search
+    // Vectorize products for search (include AI image descriptions)
     try {
-      await vectorizeProducts(context.env, savedProducts);
-      console.warn(`[CALLBACK] Vectorized ${savedProducts.length} products`);
+      const productsWithDescriptions = await Promise.all(
+        savedProducts.map(async product => {
+          const descriptions = await database
+            .select({ description: schema.productAiDescription.description })
+            .from(schema.productAiDescription)
+            .where(eq(schema.productAiDescription.productId, product.id));
+          return {
+            ...product,
+            imageDescriptions: descriptions.map(d => d.description),
+          };
+        })
+      );
+      await vectorizeProducts(context.env, productsWithDescriptions);
+      console.warn(
+        `[CALLBACK] Vectorized ${savedProducts.length} products with image descriptions`
+      );
     } catch (err) {
       console.error('[CALLBACK] Failed to vectorize products:', err);
     }

@@ -10,6 +10,7 @@ interface ProductForVectorize {
   description: string;
   category: string | null;
   price: number | null;
+  imageDescriptions?: string[];
 }
 
 function buildProductText(product: ProductForVectorize): string {
@@ -22,6 +23,9 @@ function buildProductText(product: ProductForVectorize): string {
   }
   if (product.price != null) {
     parts.push(`Price: ${product.price}`);
+  }
+  if (product.imageDescriptions && product.imageDescriptions.length > 0) {
+    parts.push(`Visual: ${product.imageDescriptions.join('. ')}`);
   }
   return parts.join(' - ');
 }
