@@ -1,8 +1,10 @@
 import type { ExtractedProduct } from '../services/extraction';
+import type { EnrichedProduct } from '../agents/types';
 import type { CrawlJobMessage, Environment } from '../types';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
+import { analyzeProducts } from '../agents/runner';
 import {
   crawlAndExtractProducts,
   extractProductsFromCsv,
