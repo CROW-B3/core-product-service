@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@commitlint/config-conventional": "^20.3.0",
-    "@deox/drizzle-d1-utils": "^0.0.1",
+    "@deox/drizzle-d1-utils": "^0.0.3",
     "better-sqlite3": "^12.6.2",
     "drizzle-kit": "^0.31.8",
     "husky": "^9.1.7",
