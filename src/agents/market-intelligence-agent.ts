@@ -142,18 +142,17 @@ Respond ONLY with valid JSON:
 }
 
 function buildCatalogSummary(catalog: CatalogProduct[]): string {
-  // Group products by category for a compact summary
-  const byCategory = new Map<string, CatalogProduct[]>();
+  const productsByCategory = new Map<string, CatalogProduct[]>();
   for (const product of catalog) {
     const cat = product.category || 'Uncategorized';
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(product);
+    if (!productsByCategory.has(cat)) productsByCategory.set(cat, []);
+    productsByCategory.get(cat)!.push(product);
   }
 
   const lines: string[] = [];
   lines.push(`Total products in catalog: ${catalog.length}`);
 
-  for (const [category, products] of byCategory) {
+  for (const [category, products] of productsByCategory) {
     const prices = products
       .map(p => p.price)
       .filter((p): p is number => p !== null);
@@ -162,18 +161,18 @@ function buildCatalogSummary(catalog: CatalogProduct[]): string {
         ? `$${(Math.min(...prices) / 100).toFixed(2)} - $${(Math.max(...prices) / 100).toFixed(2)}`
         : 'no pricing data';
 
-    // Limit to 5 product names per category to keep prompt size manageable
     const sampleNames = products
       .slice(0, 5)
       .map(p => p.title)
       .join(', ');
-    const moreCount = products.length > 5 ? ` (+${products.length - 5} more)` : '';
+    const moreCount =
+      products.length > 5 ? ` (+${products.length - 5} more)` : '';
 
     lines.push(
       `  ${category} (${products.length} products, ${priceRange}): ${sampleNames}${moreCount}`
     );
   }
 
-  // Cap the summary to avoid exceeding token limits
-  return lines.join('\n').slice(0, 2000);
+  const MAX_SUMMARY_LENGTH = 2000;
+  return lines.join('\n').slice(0, MAX_SUMMARY_LENGTH);
 }

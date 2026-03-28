@@ -1,11 +1,10 @@
-import type { CrawlJobMessage, Environment } from './types';
+import type { Environment } from './types';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { logger } from 'hono/logger';
 import { poweredBy } from 'hono/powered-by';
 import * as schema from './db/schema';
-import { handleQueueBatch } from './queues';
 import { processProductCrawlJob } from './queues/product-crawl';
 import {
   CrawlCallbackRoute,
@@ -249,16 +248,15 @@ app.openapi(SearchProductsRoute, async context => {
   const limit = Number.parseInt(limitStr || '20', 10);
 
   try {
-    // Use vectorize for semantic search
-    const vectorResults = await searchProducts(
+    const semanticSearchResults = await searchProducts(
       context.env,
       q,
       organizationId,
       limit
     );
 
-    if (vectorResults.length > 0) {
-      const productIds = vectorResults.map(r => r.id);
+    if (semanticSearchResults.length > 0) {
+      const productIds = semanticSearchResults.map(r => r.id);
       const products = await database
         .select()
         .from(schema.product)
@@ -269,15 +267,14 @@ app.openapi(SearchProductsRoute, async context => {
           )})`
         );
 
-      // Sort by vector search score order
       const productMap = new Map(products.map(p => [p.id, p]));
-      const sortedProducts = productIds
+      const sortedBySearchScore = productIds
         .map(id => productMap.get(id))
         .filter(Boolean) as (typeof schema.product.$inferSelect)[];
 
       return context.json({
-        products: sortedProducts.map(formatProductResponse),
-        total: sortedProducts.length,
+        products: sortedBySearchScore.map(formatProductResponse),
+        total: sortedBySearchScore.length,
         page: 1,
         pageSize: limit,
       });
@@ -289,7 +286,6 @@ app.openapi(SearchProductsRoute, async context => {
     );
   }
 
-  // Fallback to SQL LIKE search
   const searchTerm = `%${q}%`;
   const products = await database
     .select()
@@ -507,34 +503,32 @@ app.openapi(DebugImageDescriptionRoute, async context => {
 });
 
 app.openapi(CrawlCallbackRoute, async context => {
-  // Validate shared secret - this endpoint bypasses the API gateway
-  const crawlerSecret = context.env.CRAWLER_SERVICE_SECRET;
-  if (crawlerSecret) {
-    const requestSecret = context.req.header('X-Crawler-Secret');
-    if (requestSecret !== crawlerSecret) {
-      return context.json({ error: 'Unauthorized' }, 401);
-    }
+  const isValidCrawlerCallback =
+    !context.env.CRAWLER_SERVICE_SECRET ||
+    context.req.header('X-Crawler-Secret') ===
+      context.env.CRAWLER_SERVICE_SECRET;
+  if (!isValidCrawlerCallback) {
+    return context.json({ error: 'Unauthorized' }, 401);
   }
 
   const database = drizzle(context.env.DB, { schema });
   const { id: jobId } = context.req.valid('param');
   const body = context.req.valid('json');
 
-  // Fetch the job to verify it exists and get the organizationId
   const job = await fetchCrawlerJobById(database, jobId);
   if (!job) {
     return context.json({ error: 'Not found' }, 404);
   }
 
-  // Idempotency: if the job is already completed or failed, skip processing
-  if (job.status === 'completed' || job.status === 'failed') {
+  const jobAlreadyProcessed =
+    job.status === 'completed' || job.status === 'failed';
+  if (jobAlreadyProcessed) {
     return context.json({
       success: true,
       message: `Job already ${job.status}, skipping duplicate callback`,
     });
   }
 
-  // Handle error callback from crawler service
   if (body.error) {
     console.error(`[CALLBACK] Crawl failed for job ${jobId}: ${body.error}`);
     await database
@@ -553,7 +547,6 @@ app.openapi(CrawlCallbackRoute, async context => {
     });
   }
 
-  // Handle success callback
   if (!body.crawlId) {
     return context.json({
       success: false,
@@ -562,14 +555,12 @@ app.openapi(CrawlCallbackRoute, async context => {
   }
 
   try {
-    // Fetch crawl results from infra-crawl-service
     const crawlResults = await fetchCrawlResults(context.env, body.crawlId);
 
     console.warn(
       `[CALLBACK] Fetched ${crawlResults.chunks.length} chunks for job ${jobId}`
     );
 
-    // Convert chunks to the format expected by extractProductsFromChunks
     const textChunks = crawlResults.chunks.map(chunk => ({
       url: chunk.url,
       title: chunk.title,
@@ -580,7 +571,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       crawled_at: crawlResults.metadata.timestamp,
     }));
 
-    // Extract products from chunks
     const extractedProducts = await extractProductsFromChunks(
       context.env,
       textChunks
@@ -590,7 +580,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       `[CALLBACK] Extracted ${extractedProducts.length} products for job ${jobId}`
     );
 
-    // Save products to database
     const timestamp = new Date();
     const savedProducts: Array<{
       id: string;
@@ -635,7 +624,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       });
     }
 
-    // Mark job as completed
     await database
       .update(schema.crawlerJob)
       .set({
@@ -647,7 +635,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       })
       .where(eq(schema.crawlerJob.id, jobId));
 
-    // Generate AI image descriptions
     console.warn(
       `[CALLBACK] Starting AI description generation for ${savedProducts.length} products`
     );
@@ -668,7 +655,6 @@ app.openapi(CrawlCallbackRoute, async context => {
     }
     console.warn(`[CALLBACK] AI description generation complete`);
 
-    // Vectorize products for search (include AI image descriptions)
     try {
       const productsWithDescriptions = await Promise.all(
         savedProducts.map(async product => {
@@ -690,7 +676,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       console.error('[CALLBACK] Failed to vectorize products:', err);
     }
 
-    // Trigger organization context generation
     try {
       const orgContextUrl = context.env.ORGANIZATION_SERVICE_URL || '';
       if (orgContextUrl) {
@@ -729,7 +714,6 @@ app.openapi(CrawlCallbackRoute, async context => {
       error
     );
 
-    // Mark job as failed
     await database
       .update(schema.crawlerJob)
       .set({

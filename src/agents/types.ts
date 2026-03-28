@@ -13,13 +13,11 @@ export interface ProductAgentResult {
 }
 
 export interface EnrichedProduct {
-  // Original fields from extraction
   title: string;
   description: string;
   price: number | null;
   currency: string | null;
   imageUrls: string[];
-  // New enriched fields
   category: string;
   subcategory: string;
   tags: string[];

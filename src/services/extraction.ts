@@ -70,7 +70,6 @@ const crawlWithCrawlerService = async (
       `[CRAWLER] Async crawl scheduled for jobId: ${jobId}, response: ${asyncResponse.message}`
     );
 
-    // Return immediately - the callback will handle product extraction
     return {
       products: [],
       pagesVisited: 0,

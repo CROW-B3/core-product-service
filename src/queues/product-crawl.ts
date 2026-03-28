@@ -1,10 +1,8 @@
 import type { ExtractedProduct } from '../services/extraction';
-import type { EnrichedProduct } from '../agents/types';
 import type { CrawlJobMessage, Environment } from '../types';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../db/schema';
-import { analyzeProducts } from '../agents/runner';
 import {
   crawlAndExtractProducts,
   extractProductsFromCsv,
@@ -160,9 +158,6 @@ export const processProductCrawlJob = async (
         }
       );
 
-      // If an async job was scheduled, the callback will handle product
-      // extraction and job completion. Return early and leave the job
-      // in "in_progress" status.
       if (result.asyncJobId) {
         console.warn(
           `[QUEUE] Async crawl scheduled for job ${jobId}, waiting for callback`
@@ -214,7 +209,6 @@ export const processProductCrawlJob = async (
     }
     console.warn(`[QUEUE] AI description generation complete`);
 
-    // Vectorize products for search (include AI image descriptions)
     try {
       const productsWithDescriptions = await Promise.all(
         savedProducts.map(async product => {
@@ -234,10 +228,8 @@ export const processProductCrawlJob = async (
       );
     } catch (err) {
       console.error('[crawl] Failed to vectorize products:', err);
-      // Don't fail the job - vectorization can be retried
     }
 
-    // Trigger organization context generation
     try {
       const orgContextUrl = environment.ORGANIZATION_SERVICE_URL || '';
       if (orgContextUrl) {

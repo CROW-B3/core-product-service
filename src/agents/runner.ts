@@ -1,10 +1,10 @@
 import type { ExtractedProduct } from '../services/ai-extraction';
 import type { EnrichedProduct, ProductAgentResult } from './types';
-import { buildFallbackAgentResult } from './types';
 import { runCategorizationAgent } from './categorization-agent';
 import { runMarketIntelligenceAgent } from './market-intelligence-agent';
 import { runProductExtractorAgent } from './product-extractor-agent';
 import { runProductSynthesisAgent } from './synthesis-agent';
+import { buildFallbackAgentResult } from './types';
 
 interface CatalogProduct {
   title: string;
@@ -27,7 +27,6 @@ export async function analyzeProducts(
   const startTime = Date.now();
   const enrichedProducts: EnrichedProduct[] = [];
 
-  // Collect existing categories from the catalog for consistency
   const existingCategories = [
     ...new Set(
       existingCatalog
@@ -40,7 +39,6 @@ export async function analyzeProducts(
     `[ProductAgents] Starting multi-agent analysis for ${rawProducts.length} products (batch size: ${BATCH_SIZE})`
   );
 
-  // Process products in batches
   for (let i = 0; i < rawProducts.length; i += BATCH_SIZE) {
     const batch = rawProducts.slice(i, i + BATCH_SIZE);
     const batchIndex = Math.floor(i / BATCH_SIZE) + 1;
@@ -50,12 +48,10 @@ export async function analyzeProducts(
       `[ProductAgents] Processing batch ${batchIndex}/${totalBatches} (${batch.length} products)`
     );
 
-    // Rate limit between batches
     if (i > 0) {
       await delay(BATCH_DELAY_MS);
     }
 
-    // Process each product in the batch concurrently
     const batchResults = await Promise.allSettled(
       batch.map(product =>
         analyzeOneProduct(ai, product, existingCatalog, existingCategories)
@@ -71,13 +67,10 @@ export async function analyzeProducts(
           `[ProductAgents] Failed to analyze product "${batch[j].title}":`,
           result.reason
         );
-        // Create a minimal enriched product from raw data as fallback
         enrichedProducts.push(buildFallbackEnrichedFromRaw(batch[j]));
       }
     }
 
-    // Update existing categories with newly discovered ones for consistency
-    // across batches
     for (const enriched of enrichedProducts.slice(-batch.length)) {
       if (
         enriched.category &&
@@ -103,7 +96,6 @@ async function analyzeOneProduct(
   existingCatalog: CatalogProduct[],
   existingCategories: string[]
 ): Promise<EnrichedProduct> {
-  // Step 1: Run the 3 analysis agents in parallel
   const parallelResults = await Promise.allSettled([
     runProductExtractorAgent(ai, product),
     runCategorizationAgent(
@@ -132,7 +124,6 @@ async function analyzeOneProduct(
     ),
   ]);
 
-  // Extract results with fallbacks
   const extractorResult =
     parallelResults[0].status === 'fulfilled'
       ? parallelResults[0].value
@@ -174,7 +165,6 @@ async function analyzeOneProduct(
           },
         };
 
-  // Log agent results
   const agentNames = [
     'product-extractor-agent',
     'categorization-agent',
@@ -188,7 +178,6 @@ async function analyzeOneProduct(
     }
   }
 
-  // Collect agent results for synthesis
   const agentResults: ProductAgentResult[] = [
     {
       agentName: extractorResult.agentName,
@@ -207,7 +196,6 @@ async function analyzeOneProduct(
     },
   ];
 
-  // Step 2: Run synthesis to merge all agent outputs
   const enriched = await runProductSynthesisAgent(
     ai,
     extractorResult.extraction,
